@@ -1,5 +1,5 @@
 import { generateToken } from "../services/jwt.service";
-import { createUser, findByEmail } from "../services/user.service"
+import { createUser, findByEmail, findByToken } from "../services/user.service"
 import { Request, Response } from "express";
 import bcrypt from "bcrypt"
 
@@ -30,3 +30,16 @@ export const login = async (req: Request, res: Response) => {
   const token = generateToken(user.id, user.email);
   res.json({ token, user: { id: user.id, email: user.email } });
 };
+
+
+
+export const getme = async (req: Request, res:Response) => {
+  const authHeader = req.headers.authorization
+  if(!authHeader) {
+    res.status(401).json({message: "Нет токена"})
+  }
+
+  const token = authHeader?.split(" ")[1]
+  const user = await findByToken(token)
+  res.json({user})
+}
