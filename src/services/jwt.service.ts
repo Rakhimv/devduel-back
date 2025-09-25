@@ -7,8 +7,8 @@ if (!SECRET) {
   throw new Error("Нет SECRET в .env");
 }
 
-export const generateToken = (id: number, email: string) => {
-  return jwt.sign({ id, email }, SECRET, { expiresIn: "7d" });
+export const generateToken = (name: string, id: number, email: string) => {
+  return jwt.sign({ name, id, email }, SECRET, { expiresIn: "7d" });
 };
 
 export const verifyToken = (token: string) => {

@@ -1,45 +1,51 @@
 import { generateToken } from "../services/jwt.service";
-import { createUser, findByEmail, findByToken } from "../services/user.service"
+import { createUser, findByEmail, findByEmailOrLogin, findByLogin, findByToken } from "../services/user.service"
 import { Request, Response } from "express";
 import bcrypt from "bcrypt"
 
 
 export const register = async (req: Request, res: Response) => {
-    const { email, password } = req.body
-    const existing = await findByEmail(email)
-    if (existing) {
-        return res.status(400).json({ message: "Пользователь уже существует" })
-    }
+  const { email, password, name, login } = req.body
+  const existingEmail = await findByEmail(email)
+  if (existingEmail) {
+    return res.status(400).json({ message: "Пользователь уже существует" })
+  }
 
-    const user = await createUser(email, password)
-    const token = generateToken(user.id, user.email)
+  const existingLogin = await findByLogin(login)
+  if (existingLogin) {
+    return res.status(400).json({ message: "Логин занят", errType: "login" })
+  }
 
-    res.json({ token, user: { id: user.id, email: user.email } })
+
+  const user = await createUser(name, login, email, password)
+  const token = generateToken(user.name, user.id, user.email)
+
+  res.json({ token, user: { id: user.id, email: user.email, name: user.name } })
 }
 
 
 
 export const login = async (req: Request, res: Response) => {
-  const { email, password } = req.body;
-  const user = await findByEmail(email);
+  const { loginOrEmail, password } = req.body;
+  const user = await findByEmailOrLogin(loginOrEmail);
   if (!user) return res.status(400).json({ message: "Неправильный пароль или email" });
 
   const isValid = await bcrypt.compare(password, user.password);
   if (!isValid) return res.status(401).json({ message: "Неправильный пароль или email" });
 
-  const token = generateToken(user.id, user.email);
-  res.json({ token, user: { id: user.id, email: user.email } });
+  const token = generateToken(user.name, user.id, user.email);
+  res.json({ token, user });
 };
 
 
 
-export const getme = async (req: Request, res:Response) => {
+export const getme = async (req: Request, res: Response) => {
   const authHeader = req.headers.authorization
-  if(!authHeader) {
-    res.status(401).json({message: "Нет токена"})
+  if (!authHeader) {
+    res.status(401).json({ message: "Нет токена" })
   }
 
   const token = authHeader?.split(" ")[1]
   const user = await findByToken(token)
-  res.json({user})
+  res.json(user)
 }

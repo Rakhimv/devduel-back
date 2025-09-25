@@ -13,11 +13,21 @@ export const findByEmail = async (email: string): Promise<User | null> => {
     return result.rows[0] || null
 }
 
-export const createUser = async (email: string, password: string): Promise<User> => {
+export const findByLogin = async (login: string): Promise<User | null> => {
+    const result = await pool.query("SELECT * FROM users WHERE login = $1", [login])
+    return result.rows[0]
+}
+
+export const findByEmailOrLogin = async (login: string): Promise<User | null> => {
+    const result = await pool.query("SELECT * FROM users WHERE login = $1 OR email = $1", [login])
+    return result.rows[0] || null
+}
+
+export const createUser = async (name: string, login: string, email: string, password: string): Promise<User> => {
     const hashed = await bcrypt.hash(password, 10)
     const result = await pool.query(
-        "INSERT INTO users (email, password) VALUES ($1, $2) RETURNING *",
-        [email, hashed]
+        "INSERT INTO users (name, login, email, password) VALUES ($1, $2, $3, $4) RETURNING *",
+        [name, login, email, hashed]
     )
     return result.rows[0]
 }
