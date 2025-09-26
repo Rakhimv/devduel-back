@@ -23,6 +23,25 @@ export const findByEmailOrLogin = async (login: string): Promise<User | null> =>
     return result.rows[0] || null
 }
 
+export const saveRefreshToken = async (userId: number, refreshToken: string): Promise<void> => {
+    await pool.query(
+        "UPDATE users SET refresh_token = $1 WHERE id = $2",
+        [refreshToken, userId]
+    )
+}
+
+export const findByRefreshToken = async (refreshToken: string): Promise<User | null> => {
+    const result = await pool.query("SELECT * FROM users WHERE refresh_token = $1", [refreshToken])
+    return result.rows[0] || null
+}
+
+export const clearRefreshToken = async (userId: number): Promise<void> => {
+    await pool.query(
+        "UPDATE users SET refresh_token = NULL WHERE id = $2",
+        [userId]
+    )
+}
+
 export const createUser = async (name: string, login: string, email: string, password: string): Promise<User> => {
     const hashed = await bcrypt.hash(password, 10)
     const result = await pool.query(
@@ -33,10 +52,61 @@ export const createUser = async (name: string, login: string, email: string, pas
 }
 
 export const findByToken = async (token: any): Promise<User | null> => {
-    const userInfo = jwt.verify(token, SECRET) as { id: number };
-    if (!userInfo || typeof userInfo !== "object" || !("id" in userInfo)) {
-        return null;
-    }
-    const result = await pool.query("SELECT * FROM users WHERE id = $1", [userInfo.id])
-    return result.rows[0];
+    const decoded = jwt.verify(token, SECRET) as { id?: number; sub?: number };
+    const userId = decoded?.id ?? decoded?.sub;
+    if (!userId) return null;
+    const result = await pool.query("SELECT * FROM users WHERE id = $1", [userId])
+    return result.rows[0] || null;
 }
+
+
+export const findOrCreateUser_Github = async (githubUser: any): Promise<User> => {
+    try {
+        const { rows: existingUser } = await pool.query(
+            'SELECT * FROM users WHERE login = $1 AND provider = $2',
+            [githubUser.login, 'github']
+        );
+
+        if (existingUser.length > 0) {
+            const updated = await pool.query(
+                'UPDATE users SET name = $1, avatar = CASE WHEN avatar IS NULL THEN $2 ELSE avatar END, updated_at = NOW() WHERE login = $3 AND provider = $4 RETURNING *',
+                [githubUser.name, githubUser.avatar_url, githubUser.login, 'github']
+            );
+            return updated.rows[0];
+        }
+
+        const { rows: newUser } = await pool.query(
+            'INSERT INTO users (name, login, email, password, avatar, provider, role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+            [githubUser.name, githubUser.login, githubUser.email || null, 'oauth', githubUser.avatar_url, 'github', 'user']
+        );
+        return newUser[0];
+    } catch (err: any) {
+        throw new Error('Failed to find or create user: ' + err.message);
+    }
+};
+
+export const findOrCreateUser_Yandex = async (yandexUser: any): Promise<User> => {
+    try {
+        const { rows: existingUser } = await pool.query(
+            'SELECT * FROM users WHERE login = $1 AND provider = $2',
+            [yandexUser.login, 'yandex']
+        );
+
+        if (existingUser.length > 0) {
+            const updated = await pool.query(
+                'UPDATE users SET name = $1, avatar = CASE WHEN avatar IS NULL THEN $2 ELSE avatar END, updated_at = NOW() WHERE login = $3 AND provider = $4 RETURNING *',
+                [yandexUser.real_name || yandexUser.display_name, `https://avatars.yandex.net/get-yapic/${yandexUser.default_avatar_id}/islands-200`, yandexUser.login, 'yandex']
+            );
+            return updated.rows[0];
+        }
+
+        const { rows: newUser } = await pool.query(
+            'INSERT INTO users (name, login, email, password, avatar, provider, role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+            [yandexUser.real_name || yandexUser.display_name, yandexUser.login, yandexUser.default_email || null, 'oauth', `https://avatars.yandex.net/get-yapic/${yandexUser.default_avatar_id}/islands-200`, 'yandex', 'user']
+        );
+        return newUser[0];
+    } catch (err: any) {
+        throw new Error('Failed to find or create user: ' + err.message);
+    }
+};
+
