@@ -1,9 +1,9 @@
 import { generateToken, generateRefreshToken, verifyRefreshToken } from "../services/jwt.service";
-import { createUser, findByEmail, findByEmailOrLogin, findByLogin, findByToken, findOrCreateUser_Github, findOrCreateUser_Yandex, saveRefreshToken, findByRefreshToken, clearRefreshToken } from "../services/user.service"
+import { createUser, findByEmail, findByEmailOrLogin, findByLogin, findByToken, findOrCreateUser_Github, findOrCreateUser_Yandex, saveRefreshToken, findByRefreshToken, clearRefreshToken, findOrCreateUser_Google } from "../services/user.service"
 import { Request, Response } from "express";
 import bcrypt from "bcrypt"
 import dotenv from "dotenv"
-import { getGithubOauthToken, getGithubUser, getYandexOauthToken, getYandexUser } from "../services/auth.service";
+import { getGithubOauthToken, getGithubUser, getGoogleOauthToken, getGoogleUser, getYandexOauthToken, getYandexUser } from "../services/auth.service";
 dotenv.config({ path: "../../.env" })
 import jwt from "jsonwebtoken"
 export const register = async (req: Request, res: Response) => {
@@ -22,7 +22,7 @@ export const register = async (req: Request, res: Response) => {
   const user = await createUser(name, login, email, password)
   const token = generateToken(user.name, user.id, user.email)
   const refreshToken = generateRefreshToken(user.id)
-  
+
   await saveRefreshToken(user.id, refreshToken)
 
   res.cookie('token', token, {
@@ -36,7 +36,7 @@ export const register = async (req: Request, res: Response) => {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
-    maxAge: 180 * 24 * 60 * 60 * 1000 
+    maxAge: 180 * 24 * 60 * 60 * 1000
   });
 
   res.json({ user: { id: user.id, email: user.email, name: user.name } })
@@ -54,21 +54,21 @@ export const login = async (req: Request, res: Response) => {
 
   const token = generateToken(user.name, user.id, user.email);
   const refreshToken = generateRefreshToken(user.id)
-  
+
   await saveRefreshToken(user.id, refreshToken)
 
   res.cookie('token', token, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
-    maxAge: 15 * 60 * 1000 
+    maxAge: 15 * 60 * 1000
   });
 
   res.cookie('refreshToken', refreshToken, {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict',
-    maxAge: 180 * 24 * 60 * 60 * 1000 
+    maxAge: 180 * 24 * 60 * 60 * 1000
   });
 
   res.json({ user });
@@ -93,19 +93,19 @@ export const logout = async (req: Request, res: Response) => {
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict'
   });
-  
+
   res.clearCookie('refreshToken', {
     httpOnly: true,
     secure: process.env.NODE_ENV === 'production',
     sameSite: 'strict'
   });
-  
+
   res.json({ message: "Выход выполнен" });
 }
 
 export const refresh = async (req: Request, res: Response) => {
   const refreshToken = req.cookies?.refreshToken;
-  
+
   if (!refreshToken) {
     return res.status(401).json({ message: "Нет refresh token" });
   }
@@ -113,21 +113,21 @@ export const refresh = async (req: Request, res: Response) => {
   try {
     const decoded = verifyRefreshToken(refreshToken) as { id: number };
     const user = await findByRefreshToken(refreshToken);
-    
+
     if (!user) {
       return res.status(401).json({ message: "Недействительный refresh token" });
     }
 
     const newToken = generateToken(user.name, user.id, user.email);
     const newRefreshToken = generateRefreshToken(user.id);
-    
+
     await saveRefreshToken(user.id, newRefreshToken);
 
     res.cookie('token', newToken, {
       httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 15 * 60 * 1000 
+      maxAge: 15 * 60 * 1000
     });
 
     res.cookie('refreshToken', newRefreshToken, {
@@ -150,7 +150,7 @@ export const getme = async (req: Request, res: Response) => {
   if (!token) {
     return res.status(401).json({ message: "Нет токена" });
   }
-  
+
   const user = await findByToken(token);
   if (!user) {
     return res.status(401).json({ message: "Недействительный токен" });
@@ -178,25 +178,30 @@ export const githubOauthHandler = async (req: Request, res: Response) => {
 
     const githubUser = await getGithubUser({ access_token })
     const user = await findOrCreateUser_Github(githubUser)
+    if (!user) {
+      return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
+    }
+
+
     const token = generateToken(user.name, user.id, user.email);
     const refreshToken = generateRefreshToken(user.id);
-    
+
     await saveRefreshToken(user.id, refreshToken);
 
-    res.cookie('token', token, { 
-      httpOnly: true, 
+    res.cookie('token', token, {
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 15 * 60 * 1000 
+      maxAge: 15 * 60 * 1000
     });
-    
-    res.cookie('refreshToken', refreshToken, { 
-      httpOnly: true, 
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 180 * 24 * 60 * 60 * 1000 
+      maxAge: 180 * 24 * 60 * 60 * 1000
     });
-    
+
     const redirectUrl = req.query.state
       ? `${process.env.FRONTEND_ORIGIN}${req.query.state}`
       : `${process.env.FRONTEND_ORIGIN}/`;
@@ -227,24 +232,26 @@ export const yandexOauthHandler = async (req: Request, res: Response) => {
     const { access_token } = await getYandexOauthToken({ code });
     const yandexUser = await getYandexUser({ access_token });
     const user = await findOrCreateUser_Yandex(yandexUser);
-    
+    if (!user) {
+      return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
+    }
     const token = generateToken(user.name, user.id, user.email);
     const refreshToken = generateRefreshToken(user.id);
-    
+
     await saveRefreshToken(user.id, refreshToken);
 
-    res.cookie('token', token, { 
-      httpOnly: true, 
+    res.cookie('token', token, {
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 15 * 60 * 1000 
+      maxAge: 15 * 60 * 1000
     });
-    
-    res.cookie('refreshToken', refreshToken, { 
-      httpOnly: true, 
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
       secure: process.env.NODE_ENV === 'production',
       sameSite: 'strict',
-      maxAge: 180 * 24 * 60 * 60 * 1000 
+      maxAge: 180 * 24 * 60 * 60 * 1000
     });
 
     const redirectUrl = req.query.state
@@ -256,3 +263,58 @@ export const yandexOauthHandler = async (req: Request, res: Response) => {
     return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
   }
 };
+
+
+
+
+
+
+// GOOGLE OAUTH 
+
+
+export const googleOauthHandler = async (req: Request, res: Response) => {
+  try {
+    if (req.query.error) {
+      return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=auth_failed`);
+    }
+
+    const code = req.query.code as string;
+    if (!code) {
+      return res.status(401).json({ error: 'No code provided' });
+    }
+
+    const { access_token } = await getGoogleOauthToken({ code });
+    const googleUser = await getGoogleUser({ access_token });
+    const user = await findOrCreateUser_Google(googleUser);
+    if (!user) {
+      return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
+    }
+    const token = generateToken(user.name, user.id, user.email);
+    const refreshToken = generateRefreshToken(user.id);
+
+    await saveRefreshToken(user.id, refreshToken);
+
+    res.cookie('token', token, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000
+    });
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 180 * 24 * 60 * 60 * 1000
+    });
+
+    const redirectUrl = req.query.state
+      ? `${process.env.FRONTEND_ORIGIN}${req.query.state}`
+      : `${process.env.FRONTEND_ORIGIN}/`;
+    return res.redirect(redirectUrl);
+  } catch (err: any) {
+    console.error(err.message);
+    return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
+  }
+};
+

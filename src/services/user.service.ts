@@ -60,7 +60,7 @@ export const findByToken = async (token: any): Promise<User | null> => {
 }
 
 
-export const findOrCreateUser_Github = async (githubUser: any): Promise<User> => {
+export const findOrCreateUser_Github = async (githubUser: any): Promise<User | null> => {
     try {
         const { rows: existingUser } = await pool.query(
             'SELECT * FROM users WHERE login = $1 AND provider = $2',
@@ -85,7 +85,7 @@ export const findOrCreateUser_Github = async (githubUser: any): Promise<User> =>
     }
 };
 
-export const findOrCreateUser_Yandex = async (yandexUser: any): Promise<User> => {
+export const findOrCreateUser_Yandex = async (yandexUser: any): Promise<User | null> => {
     try {
         const { rows: existingUser } = await pool.query(
             'SELECT * FROM users WHERE login = $1 AND provider = $2',
@@ -110,3 +110,41 @@ export const findOrCreateUser_Yandex = async (yandexUser: any): Promise<User> =>
     }
 };
 
+
+
+
+
+async function generateLogin(base: string): Promise<string> {
+    let candidate = base;
+    let counter = 1;
+    while (true) {
+        const { rows } = await pool.query('SELECT 1 FROM users WHERE login = $1', [candidate]);
+        if (rows.length === 0) return candidate;
+        candidate = `${base}${counter++}`;
+    }
+}
+
+export const findOrCreateUser_Google = async (googleUser: any): Promise<User | null> => {
+    try {
+        const { rows: existingUsers } = await pool.query(
+            'SELECT * FROM users WHERE email = $1',
+            [googleUser.email]
+        );
+
+        if (existingUsers.length > 0) {
+            return existingUsers[0];
+        }
+
+        const baseLogin = googleUser.email.split('@')[0];
+        const login = await generateLogin(baseLogin);
+        const { rows: newUser } = await pool.query(
+            'INSERT INTO users (name, login, email, password, avatar, provider, role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
+            [googleUser.name, login, googleUser.email, 'oauth', googleUser.picture, 'google', 'user']
+        );
+
+        return newUser[0] || null;
+    } catch (err: any) {
+        console.error('Error in findOrCreateUser_Google:', err);
+        throw new Error('Failed to find or create user: ' + err.message);
+    }
+};
