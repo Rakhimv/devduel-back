@@ -14,3 +14,22 @@ CREATE TABLE users (
         provider <> 'local' OR email IS NOT NULL
     )
 );
+
+
+
+CREATE TABLE IF NOT EXISTS chats (
+  id VARCHAR(255) PRIMARY KEY, 
+  type VARCHAR(50) NOT NULL   
+);
+
+
+CREATE TABLE IF NOT EXISTS messages (
+  id SERIAL PRIMARY KEY,
+  chat_id VARCHAR(255) REFERENCES chats(id) ON DELETE CASCADE,
+  user_id INTEGER REFERENCES users(id) ON DELETE CASCADE, 
+  text TEXT NOT NULL,
+  timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_messages_chat_id ON messages(chat_id, timestamp DESC);
+INSERT INTO chats (id, type) VALUES ('general', 'general') ON CONFLICT DO NOTHING;

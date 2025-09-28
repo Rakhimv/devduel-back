@@ -20,7 +20,7 @@ export const register = async (req: Request, res: Response) => {
 
 
   const user = await createUser(name, login, email, password)
-  const token = generateToken(user.name, user.id, user.email)
+  const token = generateToken(user.name, user.id, user.login)
   const refreshToken = generateRefreshToken(user.id)
 
   await saveRefreshToken(user.id, refreshToken)
@@ -52,7 +52,7 @@ export const login = async (req: Request, res: Response) => {
   const isValid = await bcrypt.compare(password, user.password);
   if (!isValid) return res.status(401).json({ message: "Неправильный пароль или email" });
 
-  const token = generateToken(user.name, user.id, user.email);
+  const token = generateToken(user.name, user.id, user.login);
   const refreshToken = generateRefreshToken(user.id)
 
   await saveRefreshToken(user.id, refreshToken)
@@ -118,7 +118,7 @@ export const refresh = async (req: Request, res: Response) => {
       return res.status(401).json({ message: "Недействительный refresh token" });
     }
 
-    const newToken = generateToken(user.name, user.id, user.email);
+    const newToken = generateToken(user.name, user.id, user.login);
     const newRefreshToken = generateRefreshToken(user.id);
 
     await saveRefreshToken(user.id, newRefreshToken);
@@ -183,7 +183,7 @@ export const githubOauthHandler = async (req: Request, res: Response) => {
     }
 
 
-    const token = generateToken(user.name, user.id, user.email);
+    const token = generateToken(user.name, user.id, user.login);
     const refreshToken = generateRefreshToken(user.id);
 
     await saveRefreshToken(user.id, refreshToken);
@@ -235,7 +235,7 @@ export const yandexOauthHandler = async (req: Request, res: Response) => {
     if (!user) {
       return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
     }
-    const token = generateToken(user.name, user.id, user.email);
+    const token = generateToken(user.name, user.id, user.login);
     const refreshToken = generateRefreshToken(user.id);
 
     await saveRefreshToken(user.id, refreshToken);
@@ -289,7 +289,7 @@ export const googleOauthHandler = async (req: Request, res: Response) => {
     if (!user) {
       return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
     }
-    const token = generateToken(user.name, user.id, user.email);
+    const token = generateToken(user.name, user.id, user.login);
     const refreshToken = generateRefreshToken(user.id);
 
     await saveRefreshToken(user.id, refreshToken);
