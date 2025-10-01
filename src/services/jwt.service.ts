@@ -1,6 +1,5 @@
 import jwt from "jsonwebtoken"
-import dotenv from "dotenv"
-dotenv.config()
+
 const SECRET = process.env.SECRET
 const REFRESH_SECRET = process.env.REFRESH_SECRET || SECRET + "_refresh"
 

@@ -2,8 +2,7 @@ import bcrypt from "bcrypt"
 import { pool } from "../config/db"
 import { User } from "../models/user.model"
 import jwt from "jsonwebtoken"
-import dotenv from "dotenv"
-dotenv.config({ path: "../../.env" })
+
 const SECRET = process.env.SECRET
 
 if (!SECRET) throw new Error("Нет SECRET")

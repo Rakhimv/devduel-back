@@ -2,10 +2,10 @@ import { generateToken, generateRefreshToken, verifyRefreshToken } from "../serv
 import { createUser, findByEmail, findByEmailOrLogin, findByLogin, findByToken, findOrCreateUser_Github, findOrCreateUser_Yandex, saveRefreshToken, findByRefreshToken, clearRefreshToken, findOrCreateUser_Google } from "../services/user.service"
 import { Request, Response } from "express";
 import bcrypt from "bcrypt"
-import dotenv from "dotenv"
 import { getGithubOauthToken, getGithubUser, getGoogleOauthToken, getGoogleUser, getYandexOauthToken, getYandexUser } from "../services/auth.service";
-dotenv.config({ path: "../../.env" })
-import jwt from "jsonwebtoken"
+
+
+
 export const register = async (req: Request, res: Response) => {
   const { email, password, name, login } = req.body
   const existingEmail = await findByEmail(email)
