@@ -2,6 +2,7 @@ import bcrypt from "bcrypt"
 import { pool } from "../config/db"
 import { User } from "../models/user.model"
 import jwt from "jsonwebtoken"
+import { downloadAndSaveAvatar } from "../utils/avatarUtils"
 
 const SECRET = process.env.SECRET
 
@@ -125,6 +126,7 @@ async function generateLogin(base: string): Promise<string> {
 
 export const findOrCreateUser_Google = async (googleUser: any): Promise<User | null> => {
     try {
+        
         const { rows: existingUsers } = await pool.query(
             'SELECT * FROM users WHERE email = $1',
             [googleUser.email]
@@ -136,9 +138,20 @@ export const findOrCreateUser_Google = async (googleUser: any): Promise<User | n
 
         const baseLogin = googleUser.email.split('@')[0];
         const login = await generateLogin(baseLogin);
+        
+        let avatarPath = null;
+        try {
+            if (googleUser.picture) {
+                avatarPath = await downloadAndSaveAvatar(googleUser.picture);
+            }
+        } catch (avatarError) {
+            console.warn('Failed to save avatar, using original URL:', avatarError);
+            avatarPath = googleUser.picture; 
+        }
+        
         const { rows: newUser } = await pool.query(
             'INSERT INTO users (name, login, email, password, avatar, provider, role) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *',
-            [googleUser.name, login, googleUser.email, 'oauth', googleUser.picture, 'google', 'user']
+            [googleUser.name, login, googleUser.email, 'oauth', avatarPath, 'google', 'user']
         );
 
         return newUser[0] || null;

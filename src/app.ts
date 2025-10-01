@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import cookieParser from "cookie-parser";
+import path from "path";
 import authRoutes from "./routes/auth.routes";
 import chatRoutes from "./routes/chat.routes";
 
@@ -13,6 +14,9 @@ app.use(cors({
 }));
 app.use(express.json());
 app.use(cookieParser());
+
+// Статические файлы для аватарок
+app.use('/avatars', express.static(path.join(__dirname, '../public/avatars')));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/chats", chatRoutes);
