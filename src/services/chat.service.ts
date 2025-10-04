@@ -12,55 +12,109 @@ export const saveMessageToDB = async ({
     text: string;
     timestamp: Date;
 }) => {
-    const res = await pool.query(
-        "INSERT INTO messages (chat_id, user_id, text, timestamp) VALUES ($1, $2, $3, $4) RETURNING *",
-        [chatId, userId, text, timestamp]
-    );
-    return res.rows[0];
-};
+    const client = await pool.connect();
+    try {
+        await client.query("BEGIN");
 
-export const getMessagesFromDB = async (chatId: string, limit: number = 50, offset: number = 0) => {
+        const messageRes = await client.query(
+            "INSERT INTO messages (chat_id, user_id, text, timestamp) VALUES ($1, $2, $3, $4) RETURNING *",
+            [chatId, userId, text, timestamp]
+        );
+        const message = messageRes.rows[0];
+
+        let participants = [];
+        if (chatId === "general") {
+        
+            const participantsRes = await client.query(
+                "SELECT id AS user_id FROM users WHERE is_online = TRUE" 
+            );
+            participants = participantsRes.rows;
+        } else {
+
+            const participantsRes = await client.query(
+                "SELECT user_id FROM chat_participants WHERE chat_id = $1 AND user_id != $2",
+                [chatId, userId]
+            );
+            participants = participantsRes.rows;
+        }
+
+        for (const participant of participants) {
+            await client.query(
+                "INSERT INTO message_reads (message_id, user_id, read_at) VALUES ($1, $2, NULL) ON CONFLICT DO NOTHING",
+                [message.id, participant.user_id]
+            );
+        }
+
+        await client.query("COMMIT");
+        return message;
+    } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+    } finally {
+        client.release();
+    }
+};
+export const getMessagesFromDB = async (chatId: string, userId: number, limit: number = 50, offset: number = 0) => {
     const res = await pool.query(
-        `SELECT m.*, u.name, u.login as username 
+        `SELECT m.*, u.name, u.login as username, 
+            CASE 
+                WHEN m.user_id = $2 THEN 
+                    (SELECT COUNT(*) > 0 FROM message_reads mr2 
+                     WHERE mr2.message_id = m.id AND mr2.read_at IS NOT NULL)
+                ELSE 
+                    (mr.read_at IS NOT NULL)
+            END as is_read
      FROM messages m 
      JOIN users u ON m.user_id = u.id 
+     LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = $2
      WHERE m.chat_id = $1 
      ORDER BY m.timestamp DESC 
-     LIMIT $2 OFFSET $3`,
-        [chatId, limit, offset]
+     LIMIT $3 OFFSET $4`,
+        [chatId, userId, limit, offset]
     );
     return res.rows;
 };
 
 export const getMyChatsDB = async (userId: number) => {
-    const res = await pool.query(
-        `SELECT 
-       c.id, 
-       c.privacy_type, 
-       c.chat_type, 
-       c.name,
-       (SELECT u2.name
-        FROM chat_participants cp2 
-        JOIN users u2 ON cp2.user_id = u2.id 
-        WHERE cp2.chat_id = c.id AND cp2.user_id != $1
-        LIMIT 1) as display_name,
-       (SELECT u2.avatar
-        FROM chat_participants cp2 
-        JOIN users u2 ON cp2.user_id = u2.id 
-        WHERE cp2.chat_id = c.id AND cp2.user_id != $1
-        LIMIT 1) as avatar,
-       (SELECT m.text FROM messages m WHERE m.chat_id = c.id ORDER BY m.timestamp DESC LIMIT 1) as last_message,
-       (SELECT m.timestamp FROM messages m WHERE m.chat_id = c.id ORDER BY m.timestamp DESC LIMIT 1) as last_timestamp
-     FROM chats c
-     JOIN chat_participants cp ON c.id = cp.chat_id
-     WHERE cp.user_id = $1
-     UNION
-     SELECT 'general', 'public', 'group', 'General', 'General', null, 
-       (SELECT m.text FROM messages m WHERE m.chat_id = 'general' ORDER BY m.timestamp DESC LIMIT 1),
-       (SELECT m.timestamp FROM messages m WHERE m.chat_id = 'general' ORDER BY m.timestamp DESC LIMIT 1)`,
-        [userId]
-    );
-    return res.rows;
+
+    const privateChats = await pool.query(`
+        SELECT 
+            c.id, c.privacy_type, c.chat_type, c.name,
+            u.name as display_name, u.avatar, u.is_online as online, u.id as user_id,
+            m.text as last_message, m.timestamp as last_timestamp,
+            COALESCE(unread.unread_count, 0) as unread_count
+        FROM chats c
+        JOIN chat_participants cp ON c.id = cp.chat_id
+        JOIN users u ON u.id = (SELECT cp2.user_id FROM chat_participants cp2 WHERE cp2.chat_id = c.id AND cp2.user_id != $1 LIMIT 1)
+        LEFT JOIN LATERAL (
+            SELECT text, timestamp FROM messages WHERE chat_id = c.id ORDER BY timestamp DESC LIMIT 1
+        ) m ON true
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) as unread_count FROM messages m2 
+            LEFT JOIN message_reads mr ON m2.id = mr.message_id AND mr.user_id = $1 
+            WHERE m2.chat_id = c.id AND mr.read_at IS NULL AND m2.user_id != $1
+        ) unread ON true
+        WHERE cp.user_id = $1
+    `, [userId]);
+
+    const generalChat = await pool.query(`
+        SELECT 
+            'general' as id, 'public' as privacy_type, 'group' as chat_type, 'General' as name,
+            'General' as display_name, null as avatar, null as online,
+            m.text as last_message, m.timestamp as last_timestamp,
+            COALESCE(unread.unread_count, 0) as unread_count
+        FROM (SELECT 1) dummy
+        LEFT JOIN LATERAL (
+            SELECT text, timestamp FROM messages WHERE chat_id = 'general' ORDER BY timestamp DESC LIMIT 1
+        ) m ON true
+        LEFT JOIN LATERAL (
+            SELECT COUNT(*) as unread_count FROM messages m2 
+            LEFT JOIN message_reads mr ON m2.id = mr.message_id AND mr.user_id = $1 
+            WHERE m2.chat_id = 'general' AND mr.read_at IS NULL AND m2.user_id != $1
+        ) unread ON true
+    `, [userId]);
+
+    return [...privateChats.rows, ...generalChat.rows];
 };
 
 export const findUserByLogin = async (query: string) => {
@@ -86,7 +140,6 @@ export const createPrivateChatDB = async (userId1: number, userId2: number) => {
         return existingChat.rows[0].id;
     }
 
-    // Создаём новый чат, если не существует
     const chatId = uuidv4();
     await pool.query(
         "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING",
@@ -143,4 +196,23 @@ export const checkUserByLogin = async (currentUserId: number, targetLogin: strin
         chat_type: "direct",
         display_name: chatRes.rows[0]?.display_name || targetUser.name,
     };
+};
+
+
+
+
+
+
+
+
+
+export const getUnreadCount = async (chatId: string, userId: number) => {
+    const res = await pool.query(
+        `SELECT COUNT(*) 
+     FROM messages m 
+     LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = $2 
+     WHERE m.chat_id = $1 AND mr.read_at IS NULL AND m.user_id != $2`,
+        [chatId, userId]
+    );
+    return parseInt(res.rows[0].count);
 };

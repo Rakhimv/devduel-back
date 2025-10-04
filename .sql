@@ -1,5 +1,5 @@
 CREATE TABLE
-  users (
+  IF NOT EXISTS users (
     id SERIAL PRIMARY KEY,
     name VARCHAR(100) NOT NULL,
     login VARCHAR(50) UNIQUE NOT NULL,
@@ -47,3 +47,14 @@ CREATE TABLE
     user_id INTEGER REFERENCES users (id) ON DELETE CASCADE,
     PRIMARY KEY (chat_id, user_id)
   );
+
+
+  CREATE TABLE IF NOT EXISTS message_reads (
+    message_id INTEGER REFERENCES messages(id) ON DELETE CASCADE,
+    user_id INTEGER REFERENCES users(id) ON DELETE CASCADE,
+    read_at TIMESTAMP,
+    PRIMARY KEY (message_id, user_id)
+);
+
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_online BOOLEAN DEFAULT FALSE;

@@ -6,7 +6,11 @@ import {
     checkChatExists,
     getMessagesFromDB,
     checkUserByLogin,
+    getUnreadCount,
 } from "../services/chat.service";
+import { pool } from "../config/db";
+import { io } from "../index";
+
 
 export const getMyChats = async (req: any, res: Response) => {
     try {
@@ -52,9 +56,10 @@ export const getMessagesChat = async (req: any, res: Response) => {
             }
         }
 
-        const messages = await getMessagesFromDB(chatId, limit, offset);
+        const messages = await getMessagesFromDB(chatId, req.user.id, limit, offset);
         res.json(messages);
     } catch (error: any) {
+        console.error('Error in getMessagesChat:', error);
         res.status(500).json({ error: error.message });
     }
 };
@@ -77,7 +82,6 @@ export const getChat = async (req: any, res: Response) => {
 
         const chat = await checkChatExists(chatId, req.user.id);
         if (chat) {
-            console.log(chat)
             return res.json({
                 chatId,
                 chatExists: true,
@@ -102,5 +106,63 @@ export const getChat = async (req: any, res: Response) => {
         });
     } catch (error: any) {
         res.status(404).json({ error: error.message });
+    }
+};
+
+
+
+export const markMessagesAsRead = async (req: any, res: Response) => {
+    try {
+        const { chatId, messageIds } = req.body; 
+        const userId = req.user.id; 
+
+        await pool.query( 
+            `UPDATE message_reads 
+       SET read_at = CURRENT_TIMESTAMP 
+       WHERE message_id = ANY($1) AND user_id = $2 AND read_at IS NULL`,
+            [messageIds, userId]
+        );
+
+
+
+        const messageSendersRes = await pool.query(
+            "SELECT DISTINCT user_id FROM messages WHERE id = ANY($1) AND user_id != $2",
+            [messageIds, userId]
+        );
+        const senderIds = messageSendersRes.rows.map(row => row.user_id);
+        for (const senderId of senderIds) {
+            io.to(`user_${senderId}`).emit("messages_read_by_other", {
+                chatId,
+                messageIds,
+                readerId: userId, 
+            });
+        }
+
+
+        const chatParticipantsRes = await pool.query(
+            "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+            [chatId]
+        );
+        const lastMessageRes = await pool.query(
+            "SELECT text, timestamp FROM messages WHERE chat_id = $1 ORDER BY timestamp DESC LIMIT 1",
+            [chatId]
+        );
+        const last_message = lastMessageRes.rows[0]?.text || null;
+        const last_timestamp = lastMessageRes.rows[0]?.timestamp || null;
+
+       
+        for (const participant of chatParticipantsRes.rows) {
+            const unread_count = await getUnreadCount(chatId, participant.user_id);
+            io.to(`user_${participant.user_id}`).emit("chat_update", {
+                chatId,
+                last_message,
+                last_timestamp,
+                unread_count,
+            });
+        }
+
+        res.json({ success: true }); 
+    } catch (error: any) {
+        res.status(500).json({ error: error.message }); 
     }
 };

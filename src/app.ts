@@ -15,7 +15,6 @@ app.use(cors({
 app.use(express.json());
 app.use(cookieParser());
 
-// Статические файлы для аватарок
 app.use('/avatars', express.static(path.join(__dirname, '../public/avatars')));
 
 app.use("/api/auth", authRoutes);
