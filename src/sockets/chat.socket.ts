@@ -12,6 +12,7 @@ interface User {
 declare module "socket.io" {
   interface SocketData {
     user: User;
+    currentChatId?: string;
   }
 }
 
@@ -41,7 +42,24 @@ export const initChatSocket = (io: Server) => {
     console.log(`User connected: ${socket.data.user.id}`);
 
     socket.on("join_chat", (chatId: string) => {
-      if (chatId) socket.join(chatId);
+      if (!chatId) return;
+      
+   
+      if (socket.data.currentChatId) {
+        socket.leave(socket.data.currentChatId);
+      }
+      
+      socket.join(chatId);
+      socket.data.currentChatId = chatId;
+    });
+
+    socket.on("leave_chat", (chatId: string) => {
+      if (chatId) {
+        socket.leave(chatId);
+        if (socket.data.currentChatId === chatId) {
+          socket.data.currentChatId = undefined;
+        }
+      }
     });
 
     socket.on("send_message", async ({ chatId, text }: { chatId: string; text: string }) => {
@@ -56,7 +74,7 @@ export const initChatSocket = (io: Server) => {
 
       io.to(chatId).emit("new_message", {
         id: message.id,
-        userId: socket.data.user.id,
+        user_id: socket.data.user.id,
         username: socket.data.user.login,
         text,
         timestamp: message.timestamp,

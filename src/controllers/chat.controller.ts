@@ -113,36 +113,71 @@ export const getChat = async (req: any, res: Response) => {
 
 export const markMessagesAsRead = async (req: any, res: Response) => {
     try {
-        const { chatId, messageIds } = req.body; 
+        const { chatId, messageIds, lastMessageId } = req.body; 
         const userId = req.user.id; 
 
-        await pool.query( 
-            `UPDATE message_reads 
-       SET read_at = CURRENT_TIMESTAMP 
-       WHERE message_id = ANY($1) AND user_id = $2 AND read_at IS NULL`,
-            [messageIds, userId]
-        );
+        let affectedMessageIds = [];
 
+        if (lastMessageId) {
+            const messagesRes = await pool.query(
+                `SELECT id FROM messages 
+                WHERE chat_id = $1 AND id <= $2 AND user_id != $3
+                ORDER BY id`,
+                [chatId, lastMessageId, userId]
+            );
+            
+            affectedMessageIds = messagesRes.rows.map(row => row.id);
 
-
-        const messageSendersRes = await pool.query(
-            "SELECT DISTINCT user_id FROM messages WHERE id = ANY($1) AND user_id != $2",
-            [messageIds, userId]
-        );
-        const senderIds = messageSendersRes.rows.map(row => row.user_id);
-        for (const senderId of senderIds) {
-            io.to(`user_${senderId}`).emit("messages_read_by_other", {
-                chatId,
-                messageIds,
-                readerId: userId, 
-            });
+            if (affectedMessageIds.length > 0) {
+                await pool.query(
+                    `INSERT INTO message_reads (message_id, user_id, read_at)
+                    SELECT unnest($1::int[]), $2, CURRENT_TIMESTAMP
+                    ON CONFLICT (message_id, user_id) 
+                    DO UPDATE SET read_at = CURRENT_TIMESTAMP
+                    WHERE message_reads.read_at IS NULL`,
+                    [affectedMessageIds, userId]
+                );
+            }
+        } else if (messageIds && messageIds.length > 0) {
+            affectedMessageIds = messageIds;
+            await pool.query(
+                `INSERT INTO message_reads (message_id, user_id, read_at)
+                SELECT unnest($1::int[]), $2, CURRENT_TIMESTAMP
+                ON CONFLICT (message_id, user_id) 
+                DO UPDATE SET read_at = CURRENT_TIMESTAMP
+                WHERE message_reads.read_at IS NULL`,
+                [messageIds, userId]
+            );
         }
 
 
-        const chatParticipantsRes = await pool.query(
-            "SELECT user_id FROM chat_participants WHERE chat_id = $1",
-            [chatId]
-        );
+        if (affectedMessageIds.length > 0) {
+            const messageSendersRes = await pool.query(
+                "SELECT DISTINCT user_id FROM messages WHERE id = ANY($1) AND user_id != $2",
+                [affectedMessageIds, userId]
+            );
+            const senderIds = messageSendersRes.rows.map(row => row.user_id);
+            for (const senderId of senderIds) {
+                io.to(`user_${senderId}`).emit("messages_read_by_other", {
+                    chatId,
+                    messageIds: affectedMessageIds,
+                    readerId: userId, 
+                });
+            }
+        }
+
+        let chatParticipantsRes;
+        if (chatId === 'general') {
+            chatParticipantsRes = await pool.query(
+                "SELECT id AS user_id FROM users WHERE is_online = TRUE"
+            );
+        } else {
+            chatParticipantsRes = await pool.query(
+                "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+                [chatId]
+            );
+        }
+
         const lastMessageRes = await pool.query(
             "SELECT text, timestamp FROM messages WHERE chat_id = $1 ORDER BY timestamp DESC LIMIT 1",
             [chatId]
