@@ -7,6 +7,8 @@ import {
     getMessagesFromDB,
     checkUserByLogin,
     getUnreadCount,
+    deleteChatDB,
+    clearChatHistoryDB,
 } from "../services/chat.service";
 import { pool } from "../config/db";
 import { io } from "../index";
@@ -20,6 +22,9 @@ export const getMyChats = async (req: any, res: Response) => {
         res.status(500).json({ error: error.message });
     }
 };
+
+
+
 
 export const findChat = async (req: any, res: Response) => {
     const query = req.query.query as string;
@@ -76,7 +81,7 @@ export const getChat = async (req: any, res: Response) => {
                 chat_type: "group",
                 name: "General",
                 display_name: "General",
-                canSend: true,
+                canSend: true
             });
         }
 
@@ -101,6 +106,7 @@ export const getChat = async (req: any, res: Response) => {
             privacy_type: userResult.privacy_type,
             chat_type: userResult.chat_type,
             targetUser: userResult.targetUser,
+            user: userResult.targetUser,
             display_name: userResult.display_name,
             canSend: true,
         });
@@ -111,10 +117,72 @@ export const getChat = async (req: any, res: Response) => {
 
 
 
+
+
+export const deleteChat = async (req: any, res: Response) => {
+    try {
+        const { chatId } = req.params
+        
+        const participantsRes = await pool.query(
+            "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+            [chatId]
+        );
+        
+        const deletedChat = await deleteChatDB(chatId)
+        if (!deletedChat) {
+            return res.status(404).json({ success: false, message: "Chat not found" });
+        }
+
+        for (const participant of participantsRes.rows) {
+            io.to(`user_${participant.user_id}`).emit("chat_deleted", {
+                chatId
+            });
+        }
+        
+        return res.json({ success: true, chat: deletedChat });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
+export const clearChatHistory = async (req: any, res: Response) => {
+    try {
+        const { chatId } = req.params;
+        
+        // Проверяем доступ к чату
+        const chat = await checkChatExists(chatId, req.user.id);
+        if (!chat) {
+            return res.status(404).json({ success: false, message: "Chat not found or access denied" });
+        }
+
+        // Получаем участников чата
+        const participantsRes = await pool.query(
+            "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+            [chatId]
+        );
+        
+        // Очищаем историю
+        await clearChatHistoryDB(chatId);
+
+        // Уведомляем всех участников об очистке истории
+        for (const participant of participantsRes.rows) {
+            io.to(`user_${participant.user_id}`).emit("chat_history_cleared", {
+                chatId
+            });
+        }
+        
+        return res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+}
+
+
+
 export const markMessagesAsRead = async (req: any, res: Response) => {
     try {
-        const { chatId, messageIds, lastMessageId } = req.body; 
-        const userId = req.user.id; 
+        const { chatId, messageIds, lastMessageId } = req.body;
+        const userId = req.user.id;
 
         let affectedMessageIds = [];
 
@@ -125,7 +193,7 @@ export const markMessagesAsRead = async (req: any, res: Response) => {
                 ORDER BY id`,
                 [chatId, lastMessageId, userId]
             );
-            
+
             affectedMessageIds = messagesRes.rows.map(row => row.id);
 
             if (affectedMessageIds.length > 0) {
@@ -161,7 +229,7 @@ export const markMessagesAsRead = async (req: any, res: Response) => {
                 io.to(`user_${senderId}`).emit("messages_read_by_other", {
                     chatId,
                     messageIds: affectedMessageIds,
-                    readerId: userId, 
+                    readerId: userId,
                 });
             }
         }
@@ -185,7 +253,7 @@ export const markMessagesAsRead = async (req: any, res: Response) => {
         const last_message = lastMessageRes.rows[0]?.text || null;
         const last_timestamp = lastMessageRes.rows[0]?.timestamp || null;
 
-       
+
         for (const participant of chatParticipantsRes.rows) {
             const unread_count = await getUnreadCount(chatId, participant.user_id);
             io.to(`user_${participant.user_id}`).emit("chat_update", {
@@ -196,8 +264,8 @@ export const markMessagesAsRead = async (req: any, res: Response) => {
             });
         }
 
-        res.json({ success: true }); 
+        res.json({ success: true });
     } catch (error: any) {
-        res.status(500).json({ error: error.message }); 
+        res.status(500).json({ error: error.message });
     }
 };

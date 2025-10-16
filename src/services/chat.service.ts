@@ -24,9 +24,9 @@ export const saveMessageToDB = async ({
 
         let participants = [];
         if (chatId === "general") {
-        
+
             const participantsRes = await client.query(
-                "SELECT id AS user_id FROM users WHERE is_online = TRUE" 
+                "SELECT id AS user_id FROM users WHERE is_online = TRUE"
             );
             participants = participantsRes.rows;
         } else {
@@ -74,7 +74,6 @@ export const getMessagesFromDB = async (chatId: string, userId: number, limit: n
     );
     return res.rows;
 };
-
 export const getMyChatsDB = async (userId: number) => {
 
     const privateChats = await pool.query(`
@@ -116,7 +115,6 @@ export const getMyChatsDB = async (userId: number) => {
 
     return [...privateChats.rows, ...generalChat.rows];
 };
-
 export const findUserByLogin = async (query: string) => {
     const res = await pool.query(
         "SELECT id, name, login as username, avatar FROM users WHERE login ILIKE $1 LIMIT 5",
@@ -124,7 +122,6 @@ export const findUserByLogin = async (query: string) => {
     );
     return res.rows;
 };
-
 export const createPrivateChatDB = async (userId1: number, userId2: number) => {
     const existingChat = await pool.query(
         `SELECT c.id 
@@ -152,12 +149,19 @@ export const createPrivateChatDB = async (userId1: number, userId2: number) => {
 
     return chatId;
 };
-
 export const checkChatExists = async (chatId: string, userId: number) => {
     const res = await pool.query(
         `SELECT c.id, c.privacy_type, c.chat_type, c.name,
         (
-           SELECT row_to_json(u2) 
+           SELECT json_build_object(
+               'id', u2.id,
+               'name', u2.name,
+               'login', u2.login,
+               'email', u2.email,
+               'is_online', u2.is_online,
+               'updated_at', FLOOR(EXTRACT(EPOCH FROM u2.updated_at) * 1000)::BIGINT,
+               'avatar', u2.avatar
+           )
            FROM users u2
            JOIN chat_participants cp2 ON cp2.user_id = u2.id 
            WHERE cp2.chat_id = c.id AND cp2.user_id != $2
@@ -170,9 +174,14 @@ export const checkChatExists = async (chatId: string, userId: number) => {
     );
     return res.rows.length > 0 ? res.rows[0] : null;
 };
-
 export const checkUserByLogin = async (currentUserId: number, targetLogin: string) => {
-    const userRes = await pool.query("SELECT id, name, login FROM users WHERE login = $1", [targetLogin]);
+    const userRes = await pool.query(
+        `SELECT id, name, login, email, is_online, 
+         FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT as updated_at, 
+         avatar 
+         FROM users WHERE login = $1`, 
+        [targetLogin]
+    );
     if (!userRes.rows.length) throw new Error("User not found");
     const targetUser = userRes.rows[0];
     if (targetUser.id === currentUserId) throw new Error("Cannot create chat with yourself");
@@ -197,15 +206,6 @@ export const checkUserByLogin = async (currentUserId: number, targetLogin: strin
         display_name: chatRes.rows[0]?.display_name || targetUser.name,
     };
 };
-
-
-
-
-
-
-
-
-
 export const getUnreadCount = async (chatId: string, userId: number) => {
     const res = await pool.query(
         `SELECT COUNT(*) 
@@ -216,3 +216,12 @@ export const getUnreadCount = async (chatId: string, userId: number) => {
     );
     return parseInt(res.rows[0].count);
 };
+export const deleteChatDB = async (chatId: string) => {
+    const res = await pool.query("DELETE FROM chats WHERE id = $1 RETURNING *", [chatId])
+    return res.rows;
+}
+
+export const clearChatHistoryDB = async (chatId: string) => {
+    const res = await pool.query("DELETE FROM messages WHERE chat_id = $1 RETURNING *", [chatId])
+    return res.rows;
+}
