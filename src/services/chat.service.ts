@@ -6,19 +6,23 @@ export const saveMessageToDB = async ({
     userId,
     text,
     timestamp,
+    messageType = 'text',
+    gameInviteData = null,
 }: {
     chatId: string;
     userId: number;
     text: string;
     timestamp: Date;
+    messageType?: 'text' | 'game_invite';
+    gameInviteData?: any;
 }) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
 
         const messageRes = await client.query(
-            "INSERT INTO messages (chat_id, user_id, text, timestamp) VALUES ($1, $2, $3, $4) RETURNING *",
-            [chatId, userId, text, timestamp]
+            "INSERT INTO messages (chat_id, user_id, text, timestamp, message_type, game_invite_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
+            [chatId, userId, text, timestamp, messageType, gameInviteData ? JSON.stringify(gameInviteData) : null]
         );
         const message = messageRes.rows[0];
 
@@ -63,7 +67,9 @@ export const getMessagesFromDB = async (chatId: string, userId: number, limit: n
                      WHERE mr2.message_id = m.id AND mr2.read_at IS NOT NULL)
                 ELSE 
                     (mr.read_at IS NOT NULL)
-            END as is_read
+            END as is_read,
+            m.message_type,
+            m.game_invite_data
      FROM messages m 
      JOIN users u ON m.user_id = u.id 
      LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = $2

@@ -122,12 +122,12 @@ export const getChat = async (req: any, res: Response) => {
 export const deleteChat = async (req: any, res: Response) => {
     try {
         const { chatId } = req.params
-        
+
         const participantsRes = await pool.query(
             "SELECT user_id FROM chat_participants WHERE chat_id = $1",
             [chatId]
         );
-        
+
         const deletedChat = await deleteChatDB(chatId)
         if (!deletedChat) {
             return res.status(404).json({ success: false, message: "Chat not found" });
@@ -138,7 +138,7 @@ export const deleteChat = async (req: any, res: Response) => {
                 chatId
             });
         }
-        
+
         return res.json({ success: true, chat: deletedChat });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -148,29 +148,25 @@ export const deleteChat = async (req: any, res: Response) => {
 export const clearChatHistory = async (req: any, res: Response) => {
     try {
         const { chatId } = req.params;
-        
-        // Проверяем доступ к чату
+
         const chat = await checkChatExists(chatId, req.user.id);
         if (!chat) {
             return res.status(404).json({ success: false, message: "Chat not found or access denied" });
         }
 
-        // Получаем участников чата
         const participantsRes = await pool.query(
             "SELECT user_id FROM chat_participants WHERE chat_id = $1",
             [chatId]
         );
-        
-        // Очищаем историю
+
         await clearChatHistoryDB(chatId);
 
-        // Уведомляем всех участников об очистке истории
         for (const participant of participantsRes.rows) {
             io.to(`user_${participant.user_id}`).emit("chat_history_cleared", {
                 chatId
             });
         }
-        
+
         return res.json({ success: true });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
@@ -265,6 +261,20 @@ export const markMessagesAsRead = async (req: any, res: Response) => {
         }
 
         res.json({ success: true });
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+
+export const sendChatInvite = async (req: any, res: Response) => {
+    try {
+        const { chatId } = req.params;
+        const chat = await checkChatExists(chatId, req.user.id);
+        if (!chat) {
+            return res.status(404).json({ error: "Chat not found or access denied" });
+        }
+
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

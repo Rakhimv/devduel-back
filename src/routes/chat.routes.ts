@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { authMiddleware } from "../middlewares/auth.middleware";
-import { createPrivateChat, findChat, getMyChats, getMessagesChat, getChat, markMessagesAsRead, deleteChat, clearChatHistory } from "../controllers/chat.controller";
+import { createPrivateChat, findChat, getMyChats, getMessagesChat, getChat, markMessagesAsRead, deleteChat, clearChatHistory, sendChatInvite } from "../controllers/chat.controller";
 
 const router = Router();
 
@@ -11,6 +11,7 @@ router.post("/private", authMiddleware, createPrivateChat);
 router.post("/:chatId/mark-read", authMiddleware, markMessagesAsRead);
 router.post("/:chatId/clear", authMiddleware, clearChatHistory);
 router.get("/:chatId/messages", authMiddleware, getMessagesChat);
+router.get("/:chatId/invite", authMiddleware, sendChatInvite);
 router.delete("/:chatId", authMiddleware, deleteChat);
 
 export default router;
