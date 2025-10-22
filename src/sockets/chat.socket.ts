@@ -120,8 +120,9 @@ export const initChatSocket = (io: Server) => {
 
     socket.on("remove_previous_invites", async ({ chatId, toUserId }) => {
       try {
+        // Удаляем все активные приглашения от текущего пользователя к указанному получателю
         for (const [inviteId, invite] of gameInvites.entries()) {
-          if (invite.fromUserId === socket.data.user.id && invite.toUserId === toUserId) {
+          if (invite.fromUserId === socket.data.user.id && invite.toUserId === toUserId && invite.status === 'pending') {
             gameInvites.delete(inviteId);
             
             await pool.query(
@@ -129,7 +130,13 @@ export const initChatSocket = (io: Server) => {
               [inviteId]
             );
             
-            io.to(chatId).emit("game_invite_expired", { inviteId });
+            // Уведомляем всех участников чата об истечении приглашения
+            if (chatId) {
+              io.to(chatId).emit("game_invite_expired", { inviteId });
+            }
+            
+            // Также уведомляем получателя напрямую
+            io.to(`user_${toUserId}`).emit("game_invite_expired", { inviteId });
           }
         }
       } catch (error) {
@@ -139,6 +146,26 @@ export const initChatSocket = (io: Server) => {
 
     socket.on("send_game_invite", async ({ chatId, toUserId }) => {
       try {
+        // Удаляем все активные приглашения от текущего пользователя к указанному получателю
+        for (const [existingInviteId, existingInvite] of gameInvites.entries()) {
+          if (existingInvite.fromUserId === socket.data.user.id && 
+              existingInvite.toUserId === toUserId && 
+              existingInvite.status === 'pending') {
+            gameInvites.delete(existingInviteId);
+            
+            await pool.query(
+              "UPDATE messages SET game_invite_data = jsonb_set(game_invite_data, '{status}', '\"expired\"') WHERE game_invite_data->>'invite_id' = $1",
+              [existingInviteId]
+            );
+            
+            if (chatId) {
+              io.to(chatId).emit("game_invite_expired", { inviteId: existingInviteId });
+            }
+            
+            io.to(`user_${toUserId}`).emit("game_invite_expired", { inviteId: existingInviteId });
+          }
+        }
+
         let finalChatId = chatId;
         
         if (!chatId || chatId === 'null') {
@@ -150,8 +177,10 @@ export const initChatSocket = (io: Server) => {
           if (existingChatRes.rows.length > 0) {
             finalChatId = existingChatRes.rows[0].id;
           } else {
+            const chatId = uuidv4();
             const newChatRes = await pool.query(
-              "INSERT INTO chats (privacy_type, chat_type) VALUES ('private', 'direct') RETURNING id"
+              "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) RETURNING id",
+              [chatId, 'private', 'direct']
             );
             finalChatId = newChatRes.rows[0].id;
             
@@ -159,6 +188,9 @@ export const initChatSocket = (io: Server) => {
               "INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)",
               [finalChatId, socket.data.user.id, toUserId]
             );
+
+            io.to(`user_${socket.data.user.id}`).emit("chat_created", { chatId: finalChatId });
+            io.to(`user_${toUserId}`).emit("chat_created", { chatId: finalChatId });
           }
         }
 
@@ -211,6 +243,21 @@ export const initChatSocket = (io: Server) => {
             status: 'pending'
           }
         });
+
+        const participants = await pool.query(
+          "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+          [finalChatId]
+        );
+        
+        for (const participant of participants.rows) {
+          const unread_count = await getUnreadCount(finalChatId, participant.user_id);
+          io.to(`user_${participant.user_id}`).emit("chat_update", {
+            chatId: finalChatId,
+            last_message: message.text,
+            last_timestamp: message.timestamp,
+            unread_count,
+          });
+        }
 
         setTimeout(async () => {
           if (gameInvites.has(inviteId)) {
