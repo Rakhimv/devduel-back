@@ -1,6 +1,7 @@
 import { Server, Socket } from "socket.io";
 import { verify } from "jsonwebtoken";
 import { getUnreadCount, saveMessageToDB } from "../services/chat.service";
+import { getAllUsers, getUserById } from "../services/user.service";
 import { pool } from "../config/db";
 import { v4 as uuidv4 } from "uuid";
 
@@ -120,7 +121,6 @@ export const initChatSocket = (io: Server) => {
 
     socket.on("remove_previous_invites", async ({ chatId, toUserId }) => {
       try {
-        // Удаляем все активные приглашения от текущего пользователя к указанному получателю
         for (const [inviteId, invite] of gameInvites.entries()) {
           if (invite.fromUserId === socket.data.user.id && invite.toUserId === toUserId && invite.status === 'pending') {
             gameInvites.delete(inviteId);
@@ -130,12 +130,10 @@ export const initChatSocket = (io: Server) => {
               [inviteId]
             );
             
-            // Уведомляем всех участников чата об истечении приглашения
             if (chatId) {
               io.to(chatId).emit("game_invite_expired", { inviteId });
             }
             
-            // Также уведомляем получателя напрямую
             io.to(`user_${toUserId}`).emit("game_invite_expired", { inviteId });
           }
         }
@@ -146,7 +144,6 @@ export const initChatSocket = (io: Server) => {
 
     socket.on("send_game_invite", async ({ chatId, toUserId }) => {
       try {
-        // Удаляем все активные приглашения от текущего пользователя к указанному получателю
         for (const [existingInviteId, existingInvite] of gameInvites.entries()) {
           if (existingInvite.fromUserId === socket.data.user.id && 
               existingInvite.toUserId === toUserId && 
@@ -485,6 +482,30 @@ export const initChatSocket = (io: Server) => {
             }
           }
         }
+      }
+    });
+
+    socket.on("get_users_list", async ({ offset = 0, limit = 100 } = {}) => {
+      try {
+        const result = await getAllUsers(offset, limit);
+        socket.emit("users_list", result);
+      } catch (error) {
+        console.error("Error getting users list:", error);
+        socket.emit("error", { message: "Failed to get users list" });
+      }
+    });
+
+    socket.on("get_user_profile", async ({ userId }) => {
+      try {
+        const user = await getUserById(userId);
+        if (user) {
+          socket.emit("user_profile", user);
+        } else {
+          socket.emit("error", { message: "User not found" });
+        }
+      } catch (error) {
+        console.error("Error getting user profile:", error);
+        socket.emit("error", { message: "Failed to get user profile" });
       }
     });
 

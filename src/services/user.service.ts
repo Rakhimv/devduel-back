@@ -160,3 +160,40 @@ export const findOrCreateUser_Google = async (googleUser: any): Promise<User | n
         throw new Error('Failed to find or create user: ' + err.message);
     }
 };
+
+export const getAllUsers = async (offset: number = 0, limit: number = 100): Promise<{users: User[], total: number}> => {
+    try {
+        const maxLimit = Math.min(limit, 100);
+        const actualOffset = Math.max(0, offset);
+
+        const result = await pool.query(
+            'SELECT id, name, login, avatar, created_at FROM users ORDER BY created_at ASC LIMIT $1 OFFSET $2',
+            [maxLimit, actualOffset]
+        );
+
+        const countResult = await pool.query('SELECT COUNT(*) as total FROM users');
+        const total = parseInt(countResult.rows[0].total);
+
+        return {
+            users: result.rows,
+            total
+        };
+    } catch (err: any) {
+        console.error('Error getting all users:', err);
+        throw new Error('Failed to get users: ' + err.message);
+    }
+};
+
+
+export const getUserById = async (id: number): Promise<User | null> => {
+    try {
+        const result = await pool.query(
+            'SELECT id, name, login, email, avatar, provider, role, created_at FROM users WHERE id = $1',
+            [id]
+        );
+        return result.rows[0] || null;
+    } catch (err: any) {
+        console.error('Error getting user by ID:', err);
+        throw new Error('Failed to get user: ' + err.message);
+    }
+};

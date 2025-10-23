@@ -161,6 +161,12 @@ export const getme = async (req: Request, res: Response) => {
 
 
 
+
+
+
+/// GITHUB OAUTH
+
+
 export const githubOauthHandler = async (req: Request, res: Response) => {
   try {
     if (req.query.error) {
