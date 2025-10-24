@@ -4,6 +4,7 @@ import cookieParser from "cookie-parser";
 import path from "path";
 import authRoutes from "./routes/auth.routes";
 import chatRoutes from "./routes/chat.routes";
+import codeRoutes from "./routes/code.routes";
 
 const app = express();
 
@@ -19,6 +20,7 @@ app.use('/avatars', express.static(path.join(__dirname, '../public/avatars')));
 
 app.use("/api/auth", authRoutes);
 app.use("/api/chats", chatRoutes);
+app.use("/api/code", codeRoutes);
 
 
 
