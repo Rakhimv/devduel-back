@@ -10,11 +10,13 @@ interface GameSession {
   player1: {
     id: number;
     username: string;
+    avatar?: string | null;
     isReady: boolean;
   };
   player2: {
     id: number;
     username: string;
+    avatar?: string | null;
     isReady: boolean;
   };
   status: 'waiting' | 'ready' | 'in_progress' | 'finished' | 'abandoned';
@@ -47,19 +49,24 @@ async function loadActiveGameSessions() {
     );
 
     for (const row of result.rows) {
-      const player1Res = await pool.query("SELECT login FROM users WHERE id = $1", [row.player1_id]);
-      const player2Res = await pool.query("SELECT login FROM users WHERE id = $1", [row.player2_id]);
+      const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player1_id]);
+      const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player2_id]);
+      
+      console.log('Player1 avatar from DB:', player1Res.rows[0]?.avatar);
+      console.log('Player2 avatar from DB:', player2Res.rows[0]?.avatar);
 
       const session: GameSession = {
         id: row.id,
         player1: {
           id: row.player1_id,
           username: player1Res.rows[0]?.login || 'Unknown',
+          avatar: player1Res.rows[0]?.avatar || null,
           isReady: row.player1_ready
         },
         player2: {
           id: row.player2_id,
           username: player2Res.rows[0]?.login || 'Unknown',
+          avatar: player2Res.rows[0]?.avatar || null,
           isReady: row.player2_ready
         },
         status: row.status as GameSession['status'],
@@ -341,8 +348,27 @@ export const initChatSocket = async (io: Server) => {
           return;
         }
 
+        try {
+          const activeGamesCheck = await pool.query(
+            `SELECT id, player1_id, player2_id, status FROM games 
+             WHERE ((player1_id = $1 OR player2_id = $1) OR (player1_id = $2 OR player2_id = $2))
+             AND status IN ('waiting', 'ready', 'in_progress')`,
+            [invite.fromUserId, invite.toUserId]
+          );
+
+          if (activeGamesCheck.rows.length > 0) {
+            console.log(`Active game exists for players, rejecting invite`);
+            io.to(`user_${invite.fromUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
+            io.to(`user_${invite.toUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
+            return;
+          }
+        } catch (error) {
+          console.error("Error checking active games:", error);
+        }
+
         const existingSession = Array.from(gameSessions.values()).find(session =>
-          (session.player1.id === socket.data.user.id || session.player2.id === socket.data.user.id) &&
+          ((session.player1.id === invite.fromUserId || session.player2.id === invite.fromUserId) ||
+           (session.player1.id === invite.toUserId || session.player2.id === invite.toUserId)) &&
           session.status !== 'finished' && session.status !== 'abandoned'
         );
 
@@ -373,16 +399,22 @@ export const initChatSocket = async (io: Server) => {
         );
 
         const sessionId = uuidv4();
+        
+        const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [invite.fromUserId]);
+        const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [invite.toUserId]);
+        
         const session: GameSession = {
           id: sessionId,
           player1: {
             id: invite.fromUserId,
             username: invite.fromUsername,
+            avatar: player1Res.rows[0]?.avatar || null,
             isReady: false
           },
           player2: {
             id: invite.toUserId,
             username: socket.data.user.login,
+            avatar: player2Res.rows[0]?.avatar || null,
             isReady: false
           },
           status: 'waiting',
@@ -532,6 +564,27 @@ export const initChatSocket = async (io: Server) => {
     });
 
     socket.on("join_game_session", async ({ sessionId }) => {
+      try {
+        const dbCheck = await pool.query(
+          "SELECT status FROM games WHERE id = $1",
+          [sessionId]
+        );
+
+        if (dbCheck.rows.length === 0) {
+          socket.emit("game_not_found");
+          return;
+        }
+
+        if (dbCheck.rows[0].status === 'abandoned') {
+          socket.emit("game_session_end", { reason: 'player_left' });
+          return;
+        }
+      } catch (error) {
+        console.error("Error checking game status:", error);
+        socket.emit("game_not_found");
+        return;
+      }
+
       let session = gameSessions.get(sessionId);
 
       if (!session) {
@@ -543,19 +596,21 @@ export const initChatSocket = async (io: Server) => {
 
           if (result.rows.length > 0) {
             const row = result.rows[0];
-            const player1Res = await pool.query("SELECT login FROM users WHERE id = $1", [row.player1_id]);
-            const player2Res = await pool.query("SELECT login FROM users WHERE id = $1", [row.player2_id]);
+            const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player1_id]);
+            const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player2_id]);
 
             session = {
               id: row.id,
               player1: {
                 id: row.player1_id,
                 username: player1Res.rows[0]?.login || 'Unknown',
+                avatar: player1Res.rows[0]?.avatar || null,
                 isReady: row.player1_ready
               },
               player2: {
                 id: row.player2_id,
                 username: player2Res.rows[0]?.login || 'Unknown',
+                avatar: player2Res.rows[0]?.avatar || null,
                 isReady: row.player2_ready
               },
               status: row.status as GameSession['status'],

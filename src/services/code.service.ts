@@ -41,17 +41,18 @@ export const executeCode = async (request: CodeExecutionRequest): Promise<CodeEx
 
 export const getLanguageId = (language: string): number => {
   const languageMap: { [key: string]: number } = {
-    javascript: 63,
-    typescript: 74,
-    python: 71,
-    java: 62,
-    cpp: 54,
-    csharp: 51,
-    go: 60,
-    rust: 73,
-    php: 68,
+    javascript: 102,  // Node.js 22.08.0
+    js: 102,
+    python: 109,      // Python 3.13.2
+    cpp: 105,         // GCC 14.1.0
+    csharp: 51,       // Mono 6.6.0.161
+    go: 107,          // Go 1.23.5
+    php: 98,          // PHP 8.3.11
+    java: 91,         // JDK 17.0.6
+    typescript: 101,
+    rust: 108,
     ruby: 72,
   };
 
-  return languageMap[language] || 63; // Default to JavaScript
+  return languageMap[language.toLowerCase()] || 102; // Default to JavaScript
 };

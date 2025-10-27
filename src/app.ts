@@ -5,6 +5,7 @@ import path from "path";
 import authRoutes from "./routes/auth.routes";
 import chatRoutes from "./routes/chat.routes";
 import codeRoutes from "./routes/code.routes";
+import gameRoutes from "./routes/game.routes";
 
 const app = express();
 
@@ -21,6 +22,7 @@ app.use('/avatars', express.static(path.join(__dirname, '../public/avatars')));
 app.use("/api/auth", authRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/code", codeRoutes);
+app.use("/api/game", gameRoutes);
 
 
 
