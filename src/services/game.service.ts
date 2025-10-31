@@ -1,6 +1,7 @@
 import { pool } from "../config/db";
 import { executeCode, getLanguageId } from "./code.service";
 import { wrapCodeForTesting } from "../utils/testWrapper";
+import { finishGame, emitGameProgressUpdate } from "../sockets/chat.socket";
 
 export interface Task {
   id: number;
@@ -319,13 +320,11 @@ export const submitTaskSolution = async (
         const completedTasks = completedResult.rows.length;
         const levelUp = completedTasks > 0;
 
+        // Emit progress update to both players
+        await emitGameProgressUpdate(gameId);
+
         const MAX_LEVELS = 2;
         if (completedTasks >= MAX_LEVELS) {
-          await pool.query(
-            "UPDATE games SET status = 'finished', end_time = NOW() WHERE id = $1",
-            [gameId]
-          );
-
           const player1Result = await pool.query(
             "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player1_id FROM games WHERE id = $1)",
             [gameId]
@@ -351,6 +350,9 @@ export const submitTaskSolution = async (
               [winnerId, gameId]
             );
           }
+
+          // Finish the game and notify players with winner info
+          await finishGame(gameId, 'finished', winnerId);
 
           return {
             success: true,

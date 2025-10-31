@@ -7,6 +7,8 @@ export interface User {
     provider: string;
     role: string;
     password: string;
+    games_count?: number;
+    wins_count?: number;
 }
 
 

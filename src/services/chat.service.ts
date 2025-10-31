@@ -85,7 +85,7 @@ export const getMyChatsDB = async (userId: number) => {
     const privateChats = await pool.query(`
         SELECT 
             c.id, c.privacy_type, c.chat_type, c.name,
-            u.name as display_name, u.avatar, u.is_online as online, u.id as user_id,
+            u.name as display_name, u.avatar, u.is_online as online, u.id as user_id, u.login as username,
             m.text as last_message, m.timestamp as last_timestamp,
             COALESCE(unread.unread_count, 0) as unread_count
         FROM chats c
@@ -230,4 +230,12 @@ export const deleteChatDB = async (chatId: string) => {
 export const clearChatHistoryDB = async (chatId: string) => {
     const res = await pool.query("DELETE FROM messages WHERE chat_id = $1 RETURNING *", [chatId])
     return res.rows;
+}
+
+export const deleteMessageDB = async (messageId: number, userId: number) => {
+    const res = await pool.query(
+        "DELETE FROM messages WHERE id = $1 AND user_id = $2 RETURNING *",
+        [messageId, userId]
+    );
+    return res.rows[0] || null;
 }

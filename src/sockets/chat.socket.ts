@@ -23,6 +23,11 @@ interface GameSession {
   duration: number;
   timeRemaining: number;
   startTime: string;
+  gameResult?: 'timeout' | 'player_left' | 'completed' | 'finished';
+  winner?: {
+    id: number;
+    username: string;
+  };
 }
 
 interface User {
@@ -41,6 +46,299 @@ declare module "socket.io" {
 
 const gameSessions = new Map<string, GameSession>();
 const gameInvites = new Map<string, any>();
+
+let globalIo: Server | null = null;
+
+export const emitGameProgressUpdate = async (gameId: string) => {
+  const session = gameSessions.get(gameId);
+  if (!session || !globalIo) return;
+
+  try {
+    // Get progress for both players
+    const gameResult = await pool.query(
+      "SELECT player1_id, player2_id FROM games WHERE id = $1",
+      [gameId]
+    );
+
+    if (gameResult.rows.length === 0) return;
+
+    const game = gameResult.rows[0];
+    
+    // Get progress for player1
+    const p1ProgressRes = await pool.query(
+      "SELECT task_id FROM game_task_completions WHERE game_id = $1 AND player_id = $2",
+      [gameId, game.player1_id]
+    );
+    const p1Level = p1ProgressRes.rows.length + 1;
+
+    // Get progress for player2
+    const p2ProgressRes = await pool.query(
+      "SELECT task_id FROM game_task_completions WHERE game_id = $1 AND player_id = $2",
+      [gameId, game.player2_id]
+    );
+    const p2Level = p2ProgressRes.rows.length + 1;
+
+    // Emit progress update to both players
+    globalIo.to(`user_${game.player1_id}`).emit("game_progress_update", {
+      playerLevel: p1Level,
+      opponentLevel: p2Level
+    });
+
+    globalIo.to(`user_${game.player2_id}`).emit("game_progress_update", {
+      playerLevel: p2Level,
+      opponentLevel: p1Level
+    });
+  } catch (error) {
+    console.error("Error emitting game progress update:", error);
+  }
+};
+
+export const finishGame = async (gameId: string, reason: 'finished' | 'player_left' | 'timeout' = 'finished', winnerId?: number | null) => {
+  const session = gameSessions.get(gameId);
+  if (!session) {
+    // Try to get from DB
+    try {
+      const result = await pool.query(
+        "SELECT id, player1_id, player2_id, status, duration_ms, winner_id, start_time FROM games WHERE id = $1",
+        [gameId]
+      );
+      
+      if (result.rows.length > 0 && result.rows[0].status !== 'finished' && result.rows[0].status !== 'abandoned') {
+        const row = result.rows[0];
+        const finalWinnerId = winnerId !== undefined ? winnerId : row.winner_id;
+        
+        const finalStatus = reason === 'player_left' ? 'abandoned' : 'finished';
+        await pool.query(
+          "UPDATE games SET status = $1, end_time = NOW() WHERE id = $2",
+          [finalStatus, gameId]
+        );
+
+        // Only increment game stats if game is finished (not abandoned)
+        if (finalStatus === 'finished') {
+          // Increment games_count for both players
+          await pool.query(
+            "UPDATE users SET games_count = COALESCE(games_count, 0) + 1 WHERE id IN (SELECT player1_id FROM games WHERE id = $1 UNION SELECT player2_id FROM games WHERE id = $1)",
+            [gameId]
+          );
+
+          // Increment wins_count only for the winner
+          if (finalWinnerId) {
+            await pool.query(
+              "UPDATE users SET wins_count = COALESCE(wins_count, 0) + 1 WHERE id = $1",
+              [finalWinnerId]
+            );
+          }
+        }
+
+        if (globalIo) {
+          // Emit final progress update before ending game
+          await emitGameProgressUpdate(gameId);
+          
+          // Delay to ensure progress update animation has time to play (1 second for animation + buffer)
+          await new Promise(resolve => setTimeout(resolve, 1200));
+          
+          // Get winner info if exists
+          let winnerInfo = null;
+          if (finalWinnerId) {
+            const winnerRes = await pool.query("SELECT id, login FROM users WHERE id = $1", [finalWinnerId]);
+            if (winnerRes.rows.length > 0) {
+              winnerInfo = {
+                id: winnerRes.rows[0].id,
+                username: winnerRes.rows[0].login
+              };
+            }
+          }
+
+          // Build final session data
+          const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player1_id]);
+          const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player2_id]);
+
+          // Calculate actual game duration from start_time to end_time
+          let actualDuration = 0;
+          if (row.start_time) {
+            const startTime = new Date(row.start_time).getTime();
+            const endTime = Date.now();
+            actualDuration = Math.max(0, endTime - startTime);
+          }
+
+          const finalSession = {
+            id: gameId,
+            player1: {
+              id: row.player1_id,
+              username: player1Res.rows[0]?.login || 'Unknown',
+              avatar: player1Res.rows[0]?.avatar || null,
+              isReady: false
+            },
+            player2: {
+              id: row.player2_id,
+              username: player2Res.rows[0]?.login || 'Unknown',
+              avatar: player2Res.rows[0]?.avatar || null,
+              isReady: false
+            },
+            status: 'finished' as const,
+            duration: actualDuration || 0,
+            timeRemaining: 0,
+            startTime: row.start_time || new Date().toISOString(),
+            gameResult: reason === 'player_left' ? 'player_left' : reason === 'timeout' ? 'timeout' : 'completed',
+            winner: winnerInfo
+          };
+
+          globalIo.to(`user_${row.player1_id}`).emit("game_session_end", finalSession);
+          globalIo.to(`user_${row.player2_id}`).emit("game_session_end", finalSession);
+          
+          // Additional delay before returning to ensure both players received the event
+          await new Promise(resolve => setTimeout(resolve, 200));
+
+          const chatParticipantsRes = await pool.query(
+            "SELECT DISTINCT chat_id FROM chat_participants WHERE user_id = ANY($1)",
+            [[row.player1_id, row.player2_id]]
+          );
+
+          for (const chat of chatParticipantsRes.rows) {
+            // Calculate actual duration for notification
+            let notificationDuration = actualDuration || 0;
+            if (!actualDuration && row.start_time) {
+              const startTime = new Date(row.start_time).getTime();
+              const endTime = Date.now();
+              notificationDuration = Math.max(0, endTime - startTime);
+            }
+            
+            globalIo.to(chat.chat_id).emit("game_end_notification", {
+              reason,
+              duration: notificationDuration
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("Error finishing game from DB:", error);
+    }
+    return;
+  }
+
+  // Update session status before deletion
+  session.status = 'finished';
+  session.timeRemaining = 0;
+  session.gameResult = reason === 'player_left' ? 'player_left' : reason === 'timeout' ? 'timeout' : 'completed';
+
+  // Get winner info if provided
+  if (winnerId) {
+    try {
+      const winnerRes = await pool.query("SELECT id, login FROM users WHERE id = $1", [winnerId]);
+      if (winnerRes.rows.length > 0) {
+        if (session.player1.id === winnerId) {
+          session.winner = { id: session.player1.id, username: session.player1.username };
+        } else if (session.player2.id === winnerId) {
+          session.winner = { id: session.player2.id, username: session.player2.username };
+        }
+      }
+    } catch (error) {
+      console.error("Error getting winner info:", error);
+    }
+  } else {
+    // Try to get winner from DB
+    try {
+      const gameResult = await pool.query("SELECT winner_id FROM games WHERE id = $1", [gameId]);
+      if (gameResult.rows.length > 0 && gameResult.rows[0].winner_id) {
+        const dbWinnerId = gameResult.rows[0].winner_id;
+        if (session.player1.id === dbWinnerId) {
+          session.winner = { id: session.player1.id, username: session.player1.username };
+        } else if (session.player2.id === dbWinnerId) {
+          session.winner = { id: session.player2.id, username: session.player2.username };
+        }
+      }
+    } catch (error) {
+      console.error("Error getting winner from DB:", error);
+    }
+  }
+
+  // Calculate actual game duration from start_time
+  let actualDuration = 0;
+  if (session.startTime) {
+    const startTime = new Date(session.startTime).getTime();
+    const endTime = Date.now();
+    actualDuration = Math.max(0, endTime - startTime);
+  }
+
+  try {
+    const finalStatus = reason === 'player_left' ? 'abandoned' : 'finished';
+    await pool.query(
+      "UPDATE games SET status = $1, end_time = NOW() WHERE id = $2",
+      [finalStatus, gameId]
+    );
+
+    // Only increment game stats if game is finished (not abandoned)
+    if (finalStatus === 'finished') {
+      // Increment games_count for both players
+      await pool.query(
+        "UPDATE users SET games_count = COALESCE(games_count, 0) + 1 WHERE id IN (SELECT player1_id FROM games WHERE id = $1 UNION SELECT player2_id FROM games WHERE id = $1)",
+        [gameId]
+      );
+
+      // Increment wins_count only for the winner
+      if (winnerId) {
+        await pool.query(
+          "UPDATE users SET wins_count = COALESCE(wins_count, 0) + 1 WHERE id = $1",
+          [winnerId]
+        );
+      }
+    }
+  } catch (error) {
+    console.error("Error updating game status:", error);
+  }
+
+  if (globalIo) {
+    // Emit final progress update before ending game
+    await emitGameProgressUpdate(gameId);
+    
+    // Delay to ensure progress update animation has time to play (1 second for animation + buffer)
+    await new Promise(resolve => setTimeout(resolve, 1200));
+    
+    // Send final session with winner info - make sure it has all required fields
+    const finalSession = {
+      ...session,
+      id: session.id,
+      status: 'finished' as const,
+      duration: actualDuration || session.duration,
+      timeRemaining: 0
+    };
+    
+    globalIo.to(`user_${session.player1.id}`).emit("game_session_end", finalSession);
+    globalIo.to(`user_${session.player2.id}`).emit("game_session_end", finalSession);
+
+    // Additional delay before deleting to ensure both players received the event
+    await new Promise(resolve => setTimeout(resolve, 200));
+
+    const chatParticipantsRes = await pool.query(
+      "SELECT DISTINCT chat_id FROM chat_participants WHERE user_id = ANY($1)",
+      [[session.player1.id, session.player2.id]]
+    );
+
+    for (const chat of chatParticipantsRes.rows) {
+      globalIo.to(chat.chat_id).emit("game_end_notification", {
+        reason,
+        duration: actualDuration || session.duration
+      });
+
+      const updateRes = await pool.query(
+        "UPDATE messages SET game_invite_data = jsonb_set(game_invite_data, '{status}', '\"abandoned\"') WHERE game_invite_data->>'from_user_id' = ANY($1) AND game_invite_data->>'status' = '\"accepted\"' AND chat_id = $2 RETURNING game_invite_data->>'invite_id' as invite_id",
+        [[session.player1.id, session.player2.id], chat.chat_id]
+      );
+
+      for (const row of updateRes.rows) {
+        if (row.invite_id) {
+          globalIo.to(chat.chat_id).emit("game_invite_abandoned", { inviteId: row.invite_id });
+        }
+      }
+    }
+  }
+
+  // Delete session after ensuring both players received the final update
+  // Add small delay to ensure socket events are delivered
+  setTimeout(() => {
+    gameSessions.delete(gameId);
+  }, 500);
+};
 
 async function loadActiveGameSessions() {
   try {
@@ -84,6 +382,7 @@ async function loadActiveGameSessions() {
 }
 
 export const initChatSocket = async (io: Server) => {
+  globalIo = io;
   await loadActiveGameSessions();
 
   io.use(async (socket: Socket, next) => {
@@ -112,8 +411,19 @@ export const initChatSocket = async (io: Server) => {
     
     socket.join(`user_${socket.data.user.id}`);
     console.log(`User ${socket.data.user.id} joined room user_${socket.data.user.id}`);
+    
+    // Emit updated general chat participant count
+    const updateGeneralChatCount = async () => {
+      const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
+      const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
+      io.to('general').emit("general_chat_update", {
+        participantsCount: parseInt(totalCountRes.rows[0].total),
+        onlineCount: parseInt(onlineCountRes.rows[0].online)
+      });
+    };
+    updateGeneralChatCount();
 
-    socket.on("join_chat", (chatId: string) => {
+    socket.on("join_chat", async (chatId: string) => {
       if (!chatId) return;
       
    
@@ -123,6 +433,16 @@ export const initChatSocket = async (io: Server) => {
       
       socket.join(chatId);
       socket.data.currentChatId = chatId;
+      
+      // If joining general chat, emit updated counts
+      if (chatId === 'general') {
+        const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
+        const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
+        socket.emit("general_chat_update", {
+          participantsCount: parseInt(totalCountRes.rows[0].total),
+          onlineCount: parseInt(onlineCountRes.rows[0].online)
+        });
+      }
     });
 
     socket.on("leave_chat", (chatId: string) => {
@@ -255,15 +575,22 @@ export const initChatSocket = async (io: Server) => {
         }
 
         const inviteId = uuidv4();
-        const toUserRes = await pool.query("SELECT login FROM users WHERE id = $1", [toUserId]);
-        const toUsername = toUserRes.rows[0]?.login || 'Unknown';
-
+        
+        // Get avatars for both users
+        const fromUserRes = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [socket.data.user.id]);
+        const toUserRes = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [toUserId]);
+        
+        const fromUser = fromUserRes.rows[0];
+        const toUser = toUserRes.rows[0];
+        
         const invite = {
           id: inviteId,
           fromUserId: socket.data.user.id,
-          fromUsername: socket.data.user.login,
+          fromUsername: fromUser?.login || socket.data.user.login,
+          fromAvatar: fromUser?.avatar || null,
           toUserId,
-          toUsername,
+          toUsername: toUser?.login || 'Unknown',
+          toAvatar: toUser?.avatar || null,
           timestamp: new Date().toISOString(),
           status: 'pending'
         };
@@ -279,9 +606,11 @@ export const initChatSocket = async (io: Server) => {
           gameInviteData: {
             invite_id: inviteId,
             from_user_id: socket.data.user.id,
-            from_username: socket.data.user.login,
+            from_username: fromUser?.login || socket.data.user.login,
+            from_avatar: fromUser?.avatar || null,
             to_user_id: toUserId,
-            to_username: toUsername,
+            to_username: toUser?.login || 'Unknown',
+            to_avatar: toUser?.avatar || null,
             status: 'pending'
           }
         });
@@ -297,26 +626,42 @@ export const initChatSocket = async (io: Server) => {
           game_invite_data: {
             invite_id: inviteId,
             from_user_id: socket.data.user.id,
-            from_username: socket.data.user.login,
+            from_username: fromUser?.login || socket.data.user.login,
+            from_avatar: fromUser?.avatar || null,
             to_user_id: toUserId,
-            to_username: toUsername,
+            to_username: toUser?.login || 'Unknown',
+            to_avatar: toUser?.avatar || null,
             status: 'pending'
           }
         });
 
-        const participants = await pool.query(
-          "SELECT user_id FROM chat_participants WHERE chat_id = $1",
-          [finalChatId]
-        );
-        
-        for (const participant of participants.rows) {
-          const unread_count = await getUnreadCount(finalChatId, participant.user_id);
-          io.to(`user_${participant.user_id}`).emit("chat_update", {
-            chatId: finalChatId,
-            last_message: message.text,
-            last_timestamp: message.timestamp,
-            unread_count,
-          });
+        // Handle chat update for general or private chats
+        if (finalChatId === 'general') {
+          const allUsers = await pool.query("SELECT id FROM users WHERE is_online = TRUE");
+          for (const user of allUsers.rows) {
+            const unread_count = await getUnreadCount(finalChatId, user.id);
+            io.to(`user_${user.id}`).emit("chat_update", {
+              chatId: finalChatId,
+              last_message: message.text,
+              last_timestamp: message.timestamp,
+              unread_count,
+            });
+          }
+        } else {
+          const participants = await pool.query(
+            "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+            [finalChatId]
+          );
+          
+          for (const participant of participants.rows) {
+            const unread_count = await getUnreadCount(finalChatId, participant.user_id);
+            io.to(`user_${participant.user_id}`).emit("chat_update", {
+              chatId: finalChatId,
+              last_message: message.text,
+              last_timestamp: message.timestamp,
+              unread_count,
+            });
+          }
         }
 
         setTimeout(async () => {
@@ -348,6 +693,42 @@ export const initChatSocket = async (io: Server) => {
           return;
         }
 
+        // First check in-memory gameSessions and verify with DB
+        const existingSessionsInMemory = Array.from(gameSessions.values()).filter(session =>
+          ((session.player1.id === invite.fromUserId || session.player2.id === invite.fromUserId) ||
+           (session.player1.id === invite.toUserId || session.player2.id === invite.toUserId)) &&
+          (session.status === 'waiting' || session.status === 'ready' || session.status === 'in_progress')
+        );
+
+        // Verify sessions in memory are still active in DB, clean up if not
+        for (const session of existingSessionsInMemory) {
+          try {
+            const dbCheck = await pool.query(
+              "SELECT status FROM games WHERE id = $1",
+              [session.id]
+            );
+            
+            if (dbCheck.rows.length === 0 || 
+                dbCheck.rows[0].status === 'finished' || 
+                dbCheck.rows[0].status === 'abandoned') {
+              // Session is finished in DB, remove from memory
+              console.log(`Cleaning up finished session ${session.id} from memory`);
+              gameSessions.delete(session.id);
+            } else if (dbCheck.rows[0].status === 'waiting' || 
+                       dbCheck.rows[0].status === 'ready' || 
+                       dbCheck.rows[0].status === 'in_progress') {
+              // Session is truly active
+              console.log(`Active game session ${session.id} exists in memory and DB for players, rejecting invite`);
+              io.to(`user_${invite.fromUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
+              io.to(`user_${invite.toUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
+              return;
+            }
+          } catch (error) {
+            console.error("Error verifying session from DB:", error);
+          }
+        }
+
+        // Then check database for any other active games
         try {
           const activeGamesCheck = await pool.query(
             `SELECT id, player1_id, player2_id, status FROM games 
@@ -357,38 +738,13 @@ export const initChatSocket = async (io: Server) => {
           );
 
           if (activeGamesCheck.rows.length > 0) {
-            console.log(`Active game exists for players, rejecting invite`);
+            console.log(`Active game exists in DB for players, rejecting invite`);
             io.to(`user_${invite.fromUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
             io.to(`user_${invite.toUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
             return;
           }
         } catch (error) {
           console.error("Error checking active games:", error);
-        }
-
-        const existingSession = Array.from(gameSessions.values()).find(session =>
-          ((session.player1.id === invite.fromUserId || session.player2.id === invite.fromUserId) ||
-           (session.player1.id === invite.toUserId || session.player2.id === invite.toUserId)) &&
-          session.status !== 'finished' && session.status !== 'abandoned'
-        );
-
-        if (existingSession) {
-          console.log(`User ${socket.data.user.id} already in game ${existingSession.id}, leaving it first`);
-          gameSessions.delete(existingSession.id);
-          try {
-            await pool.query(
-              "UPDATE games SET status = 'abandoned', end_time = NOW() WHERE id = $1",
-              [existingSession.id]
-            );
-          } catch (error) {
-            console.error("Error abandoning existing game:", error);
-          }
-
-          const otherPlayerId = existingSession.player1.id === socket.data.user.id
-            ? existingSession.player2.id
-            : existingSession.player1.id;
-
-          io.to(`user_${otherPlayerId}`).emit("game_session_end", { reason: 'player_left' });
         }
 
         gameInvites.delete(inviteId);
@@ -524,33 +880,9 @@ export const initChatSocket = async (io: Server) => {
             session.timeRemaining = remaining;
 
             if (remaining <= 0) {
-              session.status = 'finished';
               clearInterval(gameTimer);
-              gameSessions.delete(sessionId);
-
-              try {
-                await pool.query(
-                  "UPDATE games SET status = 'finished', end_time = NOW() WHERE id = $1",
-                  [sessionId]
-                );
-              } catch (error) {
-                console.error("Error updating game status to finished:", error);
-              }
-
-              io.to(`user_${session.player1.id}`).emit("game_session_end", session);
-              io.to(`user_${session.player2.id}`).emit("game_session_end", session);
-
-              const chatParticipantsRes = await pool.query(
-                "SELECT DISTINCT chat_id FROM chat_participants WHERE user_id = ANY($1)",
-                [[session.player1.id, session.player2.id]]
-              );
-
-              for (const chat of chatParticipantsRes.rows) {
-                io.to(chat.chat_id).emit("game_end_notification", {
-                  reason: 'timeout',
-                  duration: session.duration
-                });
-              }
+              // Don't delete session yet, finishGame will handle it
+              await finishGame(sessionId, 'timeout');
             } else {
               io.to(`user_${session.player1.id}`).emit("game_session_update", session);
               io.to(`user_${session.player2.id}`).emit("game_session_update", session);
@@ -575,8 +907,74 @@ export const initChatSocket = async (io: Server) => {
           return;
         }
 
-        if (dbCheck.rows[0].status === 'abandoned') {
-          socket.emit("game_session_end", { reason: 'player_left' });
+        const gameStatus = dbCheck.rows[0].status;
+        
+        // If game is finished or abandoned, send game_session_end to properly disconnect player
+        if (gameStatus === 'abandoned' || gameStatus === 'finished') {
+          if (gameStatus === 'abandoned') {
+            socket.emit("game_session_end", { reason: 'player_left' });
+          } else {
+            // Game is finished - send complete session data if available
+            try {
+              const finishedGameRes = await pool.query(
+                "SELECT id, player1_id, player2_id, status, start_time, duration_ms, winner_id, end_time FROM games WHERE id = $1",
+                [sessionId]
+              );
+              
+              if (finishedGameRes.rows.length > 0) {
+                const row = finishedGameRes.rows[0];
+                const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player1_id]);
+                const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player2_id]);
+                
+                let winnerInfo = null;
+                if (row.winner_id) {
+                  const winnerRes = await pool.query("SELECT id, login FROM users WHERE id = $1", [row.winner_id]);
+                  if (winnerRes.rows.length > 0) {
+                    winnerInfo = {
+                      id: winnerRes.rows[0].id,
+                      username: winnerRes.rows[0].login
+                    };
+                  }
+                }
+                
+                let actualDuration = 0;
+                if (row.start_time && row.end_time) {
+                  const startTime = new Date(row.start_time).getTime();
+                  const endTime = new Date(row.end_time).getTime();
+                  actualDuration = Math.max(0, endTime - startTime);
+                }
+                
+                const finalSession = {
+                  id: row.id,
+                  player1: {
+                    id: row.player1_id,
+                    username: player1Res.rows[0]?.login || 'Unknown',
+                    avatar: player1Res.rows[0]?.avatar || null,
+                    isReady: false
+                  },
+                  player2: {
+                    id: row.player2_id,
+                    username: player2Res.rows[0]?.login || 'Unknown',
+                    avatar: player2Res.rows[0]?.avatar || null,
+                    isReady: false
+                  },
+                  status: 'finished' as const,
+                  duration: actualDuration || row.duration_ms || 0,
+                  timeRemaining: 0,
+                  startTime: row.start_time || new Date().toISOString(),
+                  gameResult: 'completed' as const,
+                  winner: winnerInfo
+                };
+                
+                socket.emit("game_session_end", finalSession);
+              } else {
+                socket.emit("game_session_end", { reason: 'finished' });
+              }
+            } catch (error) {
+              console.error("Error loading finished game:", error);
+              socket.emit("game_session_end", { reason: 'finished' });
+            }
+          }
           return;
         }
       } catch (error) {
@@ -627,6 +1025,12 @@ export const initChatSocket = async (io: Server) => {
       }
 
       if (session) {
+        // Double-check session status in case it changed
+        if (session.status === 'finished' || session.status === 'abandoned') {
+          socket.emit("game_session_end", session.status === 'abandoned' ? { reason: 'player_left' } : { ...session, reason: 'finished' });
+          return;
+        }
+        
         if (session.player1.id === socket.data.user.id || session.player2.id === socket.data.user.id) {
           socket.data.currentGameSession = sessionId;
           socket.emit("game_session_update", session);
@@ -664,48 +1068,7 @@ export const initChatSocket = async (io: Server) => {
     });
 
     socket.on("leave_game", async ({ sessionId }) => {
-      const session = gameSessions.get(sessionId);
-      if (session) {
-        gameSessions.delete(sessionId);
-
-        try {
-          await pool.query(
-            "UPDATE games SET status = 'abandoned', end_time = NOW() WHERE id = $1",
-            [sessionId]
-          );
-        } catch (error) {
-          console.error("Error updating game status:", error);
-        }
-
-        const otherPlayerId = session.player1.id === socket.data.user.id
-          ? session.player2.id
-          : session.player1.id;
-
-        io.to(`user_${otherPlayerId}`).emit("game_session_end", { reason: 'player_left' });
-
-        const chatParticipantsRes = await pool.query(
-          "SELECT DISTINCT chat_id FROM chat_participants WHERE user_id = ANY($1)",
-          [[session.player1.id, session.player2.id]]
-        );
-
-        for (const chat of chatParticipantsRes.rows) {
-          io.to(chat.chat_id).emit("game_end_notification", {
-            reason: 'player_left',
-            duration: session.duration
-          });
-
-          const updateRes = await pool.query(
-            "UPDATE messages SET game_invite_data = jsonb_set(game_invite_data, '{status}', '\"abandoned\"') WHERE game_invite_data->>'from_user_id' = ANY($1) AND game_invite_data->>'status' = '\"accepted\"' AND chat_id = $2 RETURNING game_invite_data->>'invite_id' as invite_id",
-            [[session.player1.id, session.player2.id], chat.chat_id]
-          );
-
-          for (const row of updateRes.rows) {
-            if (row.invite_id) {
-              io.to(chat.chat_id).emit("game_invite_abandoned", { inviteId: row.invite_id });
-            }
-          }
-        }
-      }
+      await finishGame(sessionId, 'player_left');
     });
 
     socket.on("get_users_list", async ({ offset = 0, limit = 100 } = {}) => {
@@ -734,8 +1097,18 @@ export const initChatSocket = async (io: Server) => {
 
     socket.on("disconnect", async () => {
       console.log(`User disconnected: ${socket.data.user.id}`);
+      
+      // Update is_online status
       await pool.query("UPDATE users SET is_online = FALSE WHERE id = $1", [socket.data.user.id]);
       io.emit("user_status", { userId: socket.data.user.id, isOnline: false });
+      
+      // Emit updated general chat participant count
+      const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
+      const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
+      io.to('general').emit("general_chat_update", {
+        participantsCount: parseInt(totalCountRes.rows[0].total),
+        onlineCount: parseInt(onlineCountRes.rows[0].online)
+      });
     });
   });
 };

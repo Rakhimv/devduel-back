@@ -55,7 +55,7 @@ export const findByToken = async (token: any): Promise<User | null> => {
     const decoded = jwt.verify(token, SECRET) as { id?: number; sub?: number };
     const userId = decoded?.id ?? decoded?.sub;
     if (!userId) return null;
-    const result = await pool.query("SELECT * FROM users WHERE id = $1", [userId])
+    const result = await pool.query("SELECT *, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE id = $1", [userId])
     return result.rows[0] || null;
 }
 
@@ -167,7 +167,7 @@ export const getAllUsers = async (offset: number = 0, limit: number = 100): Prom
         const actualOffset = Math.max(0, offset);
 
         const result = await pool.query(
-            'SELECT id, name, login, avatar, created_at FROM users ORDER BY created_at ASC LIMIT $1 OFFSET $2',
+            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users ORDER BY created_at ASC LIMIT $1 OFFSET $2',
             [maxLimit, actualOffset]
         );
 
@@ -188,7 +188,7 @@ export const getAllUsers = async (offset: number = 0, limit: number = 100): Prom
 export const getUserById = async (id: number): Promise<User | null> => {
     try {
         const result = await pool.query(
-            'SELECT id, name, login, email, avatar, provider, role, created_at FROM users WHERE id = $1',
+            'SELECT id, name, login, email, avatar, provider, role, created_at, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE id = $1',
             [id]
         );
         return result.rows[0] || null;

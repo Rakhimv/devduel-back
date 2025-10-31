@@ -1,6 +1,5 @@
 import { Router } from "express";
 import { authMiddleware } from "../middlewares/auth.middleware";
-import { getMyChats } from "../controllers/chat.controller";
 import { findUser, getUsersList, getUserProfile } from "../controllers/user.controller";
 
 const router = Router();

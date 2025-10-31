@@ -176,3 +176,11 @@ CREATE TABLE IF NOT EXISTS game_assigned_tasks (
 -- Game assigned tasks indexes
 CREATE INDEX IF NOT EXISTS idx_game_assigned_tasks_game_id ON game_assigned_tasks(game_id);
 CREATE INDEX IF NOT EXISTS idx_game_assigned_tasks_level ON game_assigned_tasks(game_id, level);
+
+-- Add game statistics columns to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS games_count INTEGER DEFAULT 0;
+ALTER TABLE users ADD COLUMN IF NOT EXISTS wins_count INTEGER DEFAULT 0;
+
+-- Update existing users to have 0 games if NULL
+UPDATE users SET games_count = 0 WHERE games_count IS NULL;
+UPDATE users SET wins_count = 0 WHERE wins_count IS NULL;

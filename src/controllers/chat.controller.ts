@@ -9,6 +9,7 @@ import {
     getUnreadCount,
     deleteChatDB,
     clearChatHistoryDB,
+    deleteMessageDB,
 } from "../services/chat.service";
 import { pool } from "../config/db";
 import { io } from "../index";
@@ -74,6 +75,10 @@ export const getChat = async (req: any, res: Response) => {
         const { chatId } = req.params;
 
         if (chatId === "general") {
+            // Get total participants count and online count for general chat
+            const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
+            const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
+            
             return res.json({
                 chatId,
                 chatExists: true,
@@ -81,12 +86,29 @@ export const getChat = async (req: any, res: Response) => {
                 chat_type: "group",
                 name: "General",
                 display_name: "General",
-                canSend: true
+                canSend: true,
+                participantsCount: parseInt(totalCountRes.rows[0].total),
+                onlineCount: parseInt(onlineCountRes.rows[0].online)
             });
         }
 
         const chat = await checkChatExists(chatId, req.user.id);
         if (chat) {
+            // Get user stats if it's a direct chat
+            let userStats = null;
+            if (chat.chat_type === 'direct' && chat.user) {
+                const statsRes = await pool.query(
+                    'SELECT COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE id = $1',
+                    [chat.user.id]
+                );
+                if (statsRes.rows.length > 0) {
+                    userStats = {
+                        games_count: parseInt(statsRes.rows[0].games_count),
+                        wins_count: parseInt(statsRes.rows[0].wins_count)
+                    };
+                }
+            }
+            
             return res.json({
                 chatId,
                 chatExists: true,
@@ -96,10 +118,27 @@ export const getChat = async (req: any, res: Response) => {
                 user: chat.user,
                 display_name: chat.user.name,
                 canSend: true,
+                userStats
             });
         }
 
         const userResult = await checkUserByLogin(req.user.id, chatId);
+        
+        // Get user stats for direct chat
+        let userStats = null;
+        if (userResult.chat_type === 'direct' && userResult.targetUser) {
+            const statsRes = await pool.query(
+                'SELECT COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE id = $1',
+                [userResult.targetUser.id]
+            );
+            if (statsRes.rows.length > 0) {
+                userStats = {
+                    games_count: parseInt(statsRes.rows[0].games_count),
+                    wins_count: parseInt(statsRes.rows[0].wins_count)
+                };
+            }
+        }
+        
         return res.json({
             chatId: userResult.chatId || chatId,
             chatExists: userResult.chatExists,
@@ -109,6 +148,7 @@ export const getChat = async (req: any, res: Response) => {
             user: userResult.targetUser,
             display_name: userResult.display_name,
             canSend: true,
+            userStats
         });
     } catch (error: any) {
         res.status(404).json({ error: error.message });
@@ -122,6 +162,11 @@ export const getChat = async (req: any, res: Response) => {
 export const deleteChat = async (req: any, res: Response) => {
     try {
         const { chatId } = req.params
+
+        // Prevent deletion of general chat
+        if (chatId === 'general') {
+            return res.status(403).json({ success: false, message: "Cannot delete general chat" });
+        }
 
         const participantsRes = await pool.query(
             "SELECT user_id FROM chat_participants WHERE chat_id = $1",
@@ -148,6 +193,11 @@ export const deleteChat = async (req: any, res: Response) => {
 export const clearChatHistory = async (req: any, res: Response) => {
     try {
         const { chatId } = req.params;
+
+        // Prevent clearing history of general chat
+        if (chatId === 'general') {
+            return res.status(403).json({ success: false, message: "Cannot clear general chat history" });
+        }
 
         const chat = await checkChatExists(chatId, req.user.id);
         if (!chat) {
@@ -275,6 +325,28 @@ export const sendChatInvite = async (req: any, res: Response) => {
             return res.status(404).json({ error: "Chat not found or access denied" });
         }
 
+    } catch (error: any) {
+        res.status(500).json({ error: error.message });
+    }
+};
+
+export const deleteMessage = async (req: any, res: Response) => {
+    try {
+        const { messageId } = req.params;
+        const userId = req.user.id;
+
+        const deletedMessage = await deleteMessageDB(parseInt(messageId), userId);
+        if (!deletedMessage) {
+            return res.status(404).json({ success: false, message: "Message not found or you don't have permission to delete it" });
+        }
+
+        // Emit message deletion to all chat participants
+        io.to(deletedMessage.chat_id).emit("message_deleted", {
+            messageId: deletedMessage.id,
+            chatId: deletedMessage.chat_id
+        });
+
+        return res.json({ success: true });
     } catch (error: any) {
         res.status(500).json({ error: error.message });
     }

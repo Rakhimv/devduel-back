@@ -6,6 +6,7 @@ import authRoutes from "./routes/auth.routes";
 import chatRoutes from "./routes/chat.routes";
 import codeRoutes from "./routes/code.routes";
 import gameRoutes from "./routes/game.routes";
+import userRoutes from "./routes/user.routes";
 
 const app = express();
 
@@ -23,6 +24,7 @@ app.use("/api/auth", authRoutes);
 app.use("/api/chats", chatRoutes);
 app.use("/api/code", codeRoutes);
 app.use("/api/game", gameRoutes);
+app.use("/api/users", userRoutes);
 
 
 
