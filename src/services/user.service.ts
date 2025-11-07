@@ -184,6 +184,19 @@ export const getAllUsers = async (offset: number = 0, limit: number = 100): Prom
     }
 };
 
+export const getTopUsersByWins = async (): Promise<User[]> => {
+    try {
+        const result = await pool.query(
+            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users ORDER BY COALESCE(wins_count, 0) DESC, COALESCE(games_count, 0) DESC LIMIT 100',
+        );
+
+        return result.rows;
+    } catch (err: any) {
+        console.error('Error getting top users by wins:', err);
+        throw new Error('Failed to get top users: ' + err.message);
+    }
+};
+
 
 export const getUserById = async (id: number): Promise<User | null> => {
     try {

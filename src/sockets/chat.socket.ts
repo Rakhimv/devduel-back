@@ -464,10 +464,16 @@ export const initChatSocket = async (io: Server) => {
         timestamp: new Date(),
       });
 
+
+      const userRes = await pool.query("SELECT name, avatar FROM users WHERE id = $1", [socket.data.user.id]);
+      const userInfo = userRes.rows[0];
+
       io.to(chatId).emit("new_message", {
         id: message.id,
         user_id: socket.data.user.id,
         username: socket.data.user.login,
+        name: userInfo?.name,
+        avatar: userInfo?.avatar,
         text,
         timestamp: message.timestamp,
         is_read: false,

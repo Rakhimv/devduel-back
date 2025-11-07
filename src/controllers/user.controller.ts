@@ -1,6 +1,6 @@
 import { Response } from "express";
 import { findUserByLogin } from "../services/chat.service";
-import { getAllUsers, getUserById } from "../services/user.service";
+import { getAllUsers, getUserById, getTopUsersByWins } from "../services/user.service";
 
 export const findUser = async (req: any, res: Response) => {
     const users = await findUserByLogin(req.user.login)
@@ -17,6 +17,16 @@ export const getUsersList = async (req: any, res: Response) => {
     } catch (error) {
         console.error('Error getting users list:', error);
         res.status(500).json({ error: 'Failed to get users list' });
+    }
+}
+
+export const getTopUsers = async (req: any, res: Response) => {
+    try {
+        const users = await getTopUsersByWins();
+        res.json(users);
+    } catch (error) {
+        console.error('Error getting top users:', error);
+        res.status(500).json({ error: 'Failed to get top users' });
     }
 }
 

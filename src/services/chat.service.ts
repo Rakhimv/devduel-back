@@ -26,6 +26,25 @@ export const saveMessageToDB = async ({
         );
         const message = messageRes.rows[0];
 
+        // Check message count and delete old messages if over 100
+        const countRes = await client.query(
+            "SELECT COUNT(*) as count FROM messages WHERE chat_id = $1",
+            [chatId]
+        );
+        const messageCount = parseInt(countRes.rows[0].count);
+
+        if (messageCount > 100) {
+            await client.query(
+                `DELETE FROM messages WHERE id IN (
+                    SELECT id FROM messages 
+                    WHERE chat_id = $1 
+                    ORDER BY timestamp ASC, id ASC 
+                    LIMIT $2
+                )`,
+                [chatId, messageCount - 100]
+            );
+        }
+
         let participants = [];
         if (chatId === "general") {
 
@@ -60,7 +79,7 @@ export const saveMessageToDB = async ({
 };
 export const getMessagesFromDB = async (chatId: string, userId: number, limit: number = 50, offset: number = 0) => {
     const res = await pool.query(
-        `SELECT m.*, u.name, u.login as username, 
+        `SELECT m.*, u.name, u.avatar, u.login as username, 
             CASE 
                 WHEN m.user_id = $2 THEN 
                     (SELECT COUNT(*) > 0 FROM message_reads mr2 
@@ -78,7 +97,38 @@ export const getMessagesFromDB = async (chatId: string, userId: number, limit: n
      LIMIT $3 OFFSET $4`,
         [chatId, userId, limit, offset]
     );
-    return res.rows;
+    
+    // Update avatars in game_invite_data with current avatars from users table
+    const rows = res.rows;
+    for (const row of rows) {
+        if (row.game_invite_data) {
+            try {
+                const inviteData = typeof row.game_invite_data === 'string' 
+                    ? JSON.parse(row.game_invite_data) 
+                    : row.game_invite_data;
+                
+                if (inviteData.from_user_id) {
+                    const fromUserRes = await pool.query("SELECT avatar FROM users WHERE id = $1", [inviteData.from_user_id]);
+                    if (fromUserRes.rows[0]) {
+                        inviteData.from_avatar = fromUserRes.rows[0].avatar;
+                    }
+                }
+                
+                if (inviteData.to_user_id) {
+                    const toUserRes = await pool.query("SELECT avatar FROM users WHERE id = $1", [inviteData.to_user_id]);
+                    if (toUserRes.rows[0]) {
+                        inviteData.to_avatar = toUserRes.rows[0].avatar;
+                    }
+                }
+                
+                row.game_invite_data = inviteData;
+            } catch (error) {
+                console.error('Error updating game invite avatars:', error);
+            }
+        }
+    }
+    
+    return rows;
 };
 export const getMyChatsDB = async (userId: number) => {
 
