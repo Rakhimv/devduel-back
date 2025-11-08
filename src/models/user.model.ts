@@ -9,6 +9,7 @@ export interface User {
     password: string;
     games_count?: number;
     wins_count?: number;
+    is_banned?: boolean;
 }
 
 

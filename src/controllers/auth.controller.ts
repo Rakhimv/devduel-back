@@ -156,6 +156,10 @@ export const getme = async (req: Request, res: Response) => {
     return res.status(401).json({ message: "Недействительный токен" });
   }
 
+  if (user.is_banned) {
+    return res.status(403).json({ message: "Вы забанены", is_banned: true });
+  }
+
   res.json(user);
 }
 

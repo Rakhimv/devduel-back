@@ -184,3 +184,7 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS wins_count INTEGER DEFAULT 0;
 -- Update existing users to have 0 games if NULL
 UPDATE users SET games_count = 0 WHERE games_count IS NULL;
 UPDATE users SET wins_count = 0 WHERE wins_count IS NULL;
+
+-- Add is_banned column to users table
+ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;
+

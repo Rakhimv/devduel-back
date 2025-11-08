@@ -55,7 +55,7 @@ export const findByToken = async (token: any): Promise<User | null> => {
     const decoded = jwt.verify(token, SECRET) as { id?: number; sub?: number };
     const userId = decoded?.id ?? decoded?.sub;
     if (!userId) return null;
-    const result = await pool.query("SELECT *, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE id = $1", [userId])
+    const result = await pool.query("SELECT *, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count, COALESCE(is_banned, FALSE) as is_banned FROM users WHERE id = $1", [userId])
     return result.rows[0] || null;
 }
 
@@ -167,11 +167,11 @@ export const getAllUsers = async (offset: number = 0, limit: number = 100): Prom
         const actualOffset = Math.max(0, offset);
 
         const result = await pool.query(
-            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users ORDER BY created_at ASC LIMIT $1 OFFSET $2',
+            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE COALESCE(is_banned, FALSE) = FALSE ORDER BY created_at ASC LIMIT $1 OFFSET $2',
             [maxLimit, actualOffset]
         );
 
-        const countResult = await pool.query('SELECT COUNT(*) as total FROM users');
+        const countResult = await pool.query('SELECT COUNT(*) as total FROM users WHERE COALESCE(is_banned, FALSE) = FALSE');
         const total = parseInt(countResult.rows[0].total);
 
         return {
@@ -187,7 +187,7 @@ export const getAllUsers = async (offset: number = 0, limit: number = 100): Prom
 export const getTopUsersByWins = async (): Promise<User[]> => {
     try {
         const result = await pool.query(
-            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users ORDER BY COALESCE(wins_count, 0) DESC, COALESCE(games_count, 0) DESC LIMIT 100',
+            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE COALESCE(is_banned, FALSE) = FALSE ORDER BY COALESCE(wins_count, 0) DESC, COALESCE(games_count, 0) DESC LIMIT 100',
         );
 
         return result.rows;

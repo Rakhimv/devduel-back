@@ -1,6 +1,8 @@
 import { Response } from "express";
 import { findUserByLogin } from "../services/chat.service";
 import { getAllUsers, getUserById, getTopUsersByWins } from "../services/user.service";
+import { AuthRequest } from "../middlewares/auth.middleware";
+import { pool } from "../config/db";
 
 export const findUser = async (req: any, res: Response) => {
     const users = await findUserByLogin(req.user.login)
@@ -48,3 +50,19 @@ export const getUserProfile = async (req: any, res: Response) => {
         res.status(500).json({ error: 'Failed to get user profile' });
     }
 }
+
+export const deleteUser = async (req: AuthRequest, res: Response) => {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ error: 'Не авторизован' });
+        }
+
+        await pool.query('DELETE FROM users WHERE id = $1', [userId]);
+        
+        res.json({ message: 'Аккаунт успешно удален' });
+    } catch (error) {
+        console.error('Error deleting user:', error);
+        res.status(500).json({ error: 'Ошибка удаления аккаунта' });
+    }
+};

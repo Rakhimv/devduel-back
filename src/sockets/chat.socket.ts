@@ -457,6 +457,12 @@ export const initChatSocket = async (io: Server) => {
     socket.on("send_message", async ({ chatId, text }: { chatId: string; text: string }) => {
       if (!chatId || !text.trim()) return;
 
+      const userCheck = await pool.query("SELECT is_banned FROM users WHERE id = $1", [socket.data.user.id]);
+      if (userCheck.rows[0]?.is_banned) {
+        socket.emit("error", { message: "Вы забанены и не можете отправлять сообщения" });
+        return;
+      }
+
       const message = await saveMessageToDB({
         chatId,
         userId: socket.data.user.id,
@@ -470,6 +476,7 @@ export const initChatSocket = async (io: Server) => {
 
       io.to(chatId).emit("new_message", {
         id: message.id,
+        chat_id: chatId,
         user_id: socket.data.user.id,
         username: socket.data.user.login,
         name: userInfo?.name,
@@ -582,9 +589,9 @@ export const initChatSocket = async (io: Server) => {
 
         const inviteId = uuidv4();
         
-        // Get avatars for both users
-        const fromUserRes = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [socket.data.user.id]);
-        const toUserRes = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [toUserId]);
+        // Get avatars and names for both users
+        const fromUserRes = await pool.query("SELECT name, login, avatar FROM users WHERE id = $1", [socket.data.user.id]);
+        const toUserRes = await pool.query("SELECT name, login, avatar FROM users WHERE id = $1", [toUserId]);
         
         const fromUser = fromUserRes.rows[0];
         const toUser = toUserRes.rows[0];
@@ -606,25 +613,33 @@ export const initChatSocket = async (io: Server) => {
         const message = await saveMessageToDB({
           chatId: finalChatId,
           userId: socket.data.user.id,
-          text: `🎮 Игровое приглашение от ${socket.data.user.login}`,
+          text: `🎮 Игровое приглашение от ${fromUser?.name || socket.data.user.login}`,
           timestamp: new Date(),
           messageType: 'game_invite',
           gameInviteData: {
             invite_id: inviteId,
             from_user_id: socket.data.user.id,
             from_username: fromUser?.login || socket.data.user.login,
+            from_name: fromUser?.name || socket.data.user.name,
             from_avatar: fromUser?.avatar || null,
             to_user_id: toUserId,
             to_username: toUser?.login || 'Unknown',
+            to_name: toUser?.name || 'Unknown',
             to_avatar: toUser?.avatar || null,
             status: 'pending'
           }
         });
 
+        const userRes = await pool.query("SELECT name, avatar FROM users WHERE id = $1", [socket.data.user.id]);
+        const userInfo = userRes.rows[0];
+
         io.to(finalChatId).emit("new_message", {
           id: message.id,
+          chat_id: finalChatId,
           user_id: socket.data.user.id,
           username: socket.data.user.login,
+          name: userInfo?.name || socket.data.user.name,
+          avatar: userInfo?.avatar || null,
           text: message.text,
           timestamp: message.timestamp,
           is_read: false,
@@ -633,9 +648,11 @@ export const initChatSocket = async (io: Server) => {
             invite_id: inviteId,
             from_user_id: socket.data.user.id,
             from_username: fromUser?.login || socket.data.user.login,
+            from_name: fromUser?.name || socket.data.user.name,
             from_avatar: fromUser?.avatar || null,
             to_user_id: toUserId,
             to_username: toUser?.login || 'Unknown',
+            to_name: toUser?.name || 'Unknown',
             to_avatar: toUser?.avatar || null,
             status: 'pending'
           }

@@ -108,16 +108,24 @@ export const getMessagesFromDB = async (chatId: string, userId: number, limit: n
                     : row.game_invite_data;
                 
                 if (inviteData.from_user_id) {
-                    const fromUserRes = await pool.query("SELECT avatar FROM users WHERE id = $1", [inviteData.from_user_id]);
+                    const fromUserRes = await pool.query("SELECT name, login, avatar FROM users WHERE id = $1", [inviteData.from_user_id]);
                     if (fromUserRes.rows[0]) {
                         inviteData.from_avatar = fromUserRes.rows[0].avatar;
+                        inviteData.from_name = fromUserRes.rows[0].name;
+                        if (!inviteData.from_username) {
+                            inviteData.from_username = fromUserRes.rows[0].login;
+                        }
                     }
                 }
                 
                 if (inviteData.to_user_id) {
-                    const toUserRes = await pool.query("SELECT avatar FROM users WHERE id = $1", [inviteData.to_user_id]);
+                    const toUserRes = await pool.query("SELECT name, login, avatar FROM users WHERE id = $1", [inviteData.to_user_id]);
                     if (toUserRes.rows[0]) {
                         inviteData.to_avatar = toUserRes.rows[0].avatar;
+                        inviteData.to_name = toUserRes.rows[0].name;
+                        if (!inviteData.to_username) {
+                            inviteData.to_username = toUserRes.rows[0].login;
+                        }
                     }
                 }
                 
@@ -173,7 +181,7 @@ export const getMyChatsDB = async (userId: number) => {
 };
 export const findUserByLogin = async (query: string) => {
     const res = await pool.query(
-        "SELECT id, name, login as username, avatar FROM users WHERE login ILIKE $1 LIMIT 5",
+        "SELECT id, name, login as username, avatar FROM users WHERE login ILIKE $1 AND COALESCE(is_banned, FALSE) = FALSE LIMIT 5",
         [`%${query}%`]
     );
     return res.rows;
