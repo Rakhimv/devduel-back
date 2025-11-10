@@ -8,6 +8,7 @@ export const saveMessageToDB = async ({
     timestamp,
     messageType = 'text',
     gameInviteData = null,
+    replyToMessageId = null,
 }: {
     chatId: string;
     userId: number;
@@ -15,14 +16,15 @@ export const saveMessageToDB = async ({
     timestamp: Date;
     messageType?: 'text' | 'game_invite';
     gameInviteData?: any;
+    replyToMessageId?: number | null;
 }) => {
     const client = await pool.connect();
     try {
         await client.query("BEGIN");
 
         const messageRes = await client.query(
-            "INSERT INTO messages (chat_id, user_id, text, timestamp, message_type, game_invite_data) VALUES ($1, $2, $3, $4, $5, $6) RETURNING *",
-            [chatId, userId, text, timestamp, messageType, gameInviteData ? JSON.stringify(gameInviteData) : null]
+            "INSERT INTO messages (chat_id, user_id, text, timestamp, message_type, game_invite_data, reply_to_message_id) VALUES ($1, $2, $3, $4, $5, $6, $7) RETURNING *",
+            [chatId, userId, text, timestamp, messageType, gameInviteData ? JSON.stringify(gameInviteData) : null, replyToMessageId]
         );
         const message = messageRes.rows[0];
 
@@ -88,10 +90,26 @@ export const getMessagesFromDB = async (chatId: string, userId: number, limit: n
                     (mr.read_at IS NOT NULL)
             END as is_read,
             m.message_type,
-            m.game_invite_data
+            m.game_invite_data,
+            m.reply_to_message_id,
+            CASE 
+                WHEN m.reply_to_message_id IS NOT NULL THEN
+                    json_build_object(
+                        'id', rm.id,
+                        'text', rm.text,
+                        'user_id', rm.user_id,
+                        'username', ru.login,
+                        'name', ru.name,
+                        'avatar', ru.avatar,
+                        'message_type', rm.message_type
+                    )
+                ELSE NULL
+            END as reply_to_message
      FROM messages m 
      JOIN users u ON m.user_id = u.id 
      LEFT JOIN message_reads mr ON m.id = mr.message_id AND mr.user_id = $2
+     LEFT JOIN messages rm ON m.reply_to_message_id = rm.id
+     LEFT JOIN users ru ON rm.user_id = ru.id
      WHERE m.chat_id = $1 
      ORDER BY m.timestamp DESC 
      LIMIT $3 OFFSET $4`,

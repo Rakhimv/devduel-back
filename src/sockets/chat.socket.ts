@@ -454,7 +454,7 @@ export const initChatSocket = async (io: Server) => {
       }
     });
 
-    socket.on("send_message", async ({ chatId, text }: { chatId: string; text: string }) => {
+    socket.on("send_message", async ({ chatId, text, replyToMessageId }: { chatId: string; text: string; replyToMessageId?: number }) => {
       if (!chatId || !text.trim()) return;
 
       const userCheck = await pool.query("SELECT is_banned FROM users WHERE id = $1", [socket.data.user.id]);
@@ -463,11 +463,32 @@ export const initChatSocket = async (io: Server) => {
         return;
       }
 
+      // Validate reply_to_message_id if provided
+      let replyToMessage = null;
+      if (replyToMessageId) {
+        const replyCheck = await pool.query(
+          "SELECT m.*, u.login as username, u.name, u.avatar FROM messages m JOIN users u ON m.user_id = u.id WHERE m.id = $1 AND m.chat_id = $2",
+          [replyToMessageId, chatId]
+        );
+        if (replyCheck.rows[0]) {
+          replyToMessage = {
+            id: replyCheck.rows[0].id,
+            text: replyCheck.rows[0].text,
+            user_id: replyCheck.rows[0].user_id,
+            username: replyCheck.rows[0].username,
+            name: replyCheck.rows[0].name,
+            avatar: replyCheck.rows[0].avatar,
+            message_type: replyCheck.rows[0].message_type
+          };
+        }
+      }
+
       const message = await saveMessageToDB({
         chatId,
         userId: socket.data.user.id,
         text,
         timestamp: new Date(),
+        replyToMessageId: replyToMessageId || null,
       });
 
 
@@ -484,6 +505,8 @@ export const initChatSocket = async (io: Server) => {
         text,
         timestamp: message.timestamp,
         is_read: false,
+        reply_to_message_id: message.reply_to_message_id || null,
+        reply_to_message: replyToMessage,
       });
 
       if (chatId === 'general') {
@@ -904,8 +927,41 @@ export const initChatSocket = async (io: Server) => {
 
             if (remaining <= 0) {
               clearInterval(gameTimer);
-              // Don't delete session yet, finishGame will handle it
-              await finishGame(sessionId, 'timeout');
+              
+              try {
+                const p1Completions = await pool.query(
+                  "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player1_id FROM games WHERE id = $1)",
+                  [sessionId]
+                );
+                const p2Completions = await pool.query(
+                  "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player2_id FROM games WHERE id = $1)",
+                  [sessionId]
+                );
+                
+                const p1Count = parseInt(p1Completions.rows[0].count);
+                const p2Count = parseInt(p2Completions.rows[0].count);
+                
+                let timeoutWinnerId = null;
+                if (p1Count > p2Count) {
+                  const gameRes = await pool.query("SELECT player1_id FROM games WHERE id = $1", [sessionId]);
+                  timeoutWinnerId = gameRes.rows[0]?.player1_id;
+                } else if (p2Count > p1Count) {
+                  const gameRes = await pool.query("SELECT player2_id FROM games WHERE id = $1", [sessionId]);
+                  timeoutWinnerId = gameRes.rows[0]?.player2_id;
+                }
+                
+                if (timeoutWinnerId) {
+                  await pool.query(
+                    "UPDATE games SET winner_id = $1 WHERE id = $2",
+                    [timeoutWinnerId, sessionId]
+                  );
+                }
+                
+                await finishGame(sessionId, 'timeout', timeoutWinnerId);
+              } catch (error) {
+                console.error("Error determining timeout winner:", error);
+                await finishGame(sessionId, 'timeout');
+              }
             } else {
               io.to(`user_${session.player1.id}`).emit("game_session_update", session);
               io.to(`user_${session.player2.id}`).emit("game_session_update", session);

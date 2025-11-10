@@ -57,7 +57,8 @@ CREATE TABLE
     text TEXT NOT NULL,
     timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     message_type VARCHAR(20) DEFAULT 'text' CHECK (message_type IN ('text', 'game_invite')),
-    game_invite_data JSONB
+    game_invite_data JSONB,
+    reply_to_message_id INTEGER REFERENCES messages (id) ON DELETE SET NULL
   );
 
 CREATE TABLE

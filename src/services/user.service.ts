@@ -187,7 +187,19 @@ export const getAllUsers = async (offset: number = 0, limit: number = 100): Prom
 export const getTopUsersByWins = async (): Promise<User[]> => {
     try {
         const result = await pool.query(
-            'SELECT id, name, login, avatar, created_at, is_online, COALESCE(games_count, 0) as games_count, COALESCE(wins_count, 0) as wins_count FROM users WHERE COALESCE(is_banned, FALSE) = FALSE ORDER BY COALESCE(wins_count, 0) DESC, COALESCE(games_count, 0) DESC LIMIT 100',
+            `SELECT 
+                id, name, login, avatar, created_at, is_online, 
+                COALESCE(games_count, 0) as games_count, 
+                COALESCE(wins_count, 0) as wins_count,
+                CASE 
+                    WHEN COALESCE(games_count, 0) > 0 
+                    THEN ROUND((COALESCE(wins_count, 0)::numeric / COALESCE(games_count, 1)::numeric) * 100)
+                    ELSE 0 
+                END as win_rate
+            FROM users 
+            WHERE COALESCE(is_banned, FALSE) = FALSE 
+            ORDER BY COALESCE(wins_count, 0) DESC, COALESCE(games_count, 0) DESC 
+            LIMIT 100`,
         );
 
         return result.rows;

@@ -1,6 +1,8 @@
 import { Response } from "express";
 import { AuthRequest } from "../middlewares/auth.middleware";
 import { pool } from "../config/db";
+import { executeCode } from "../services/code.service";
+import { wrapCodeForTesting } from "../utils/testWrapper";
 
 export const getUsers = async (req: AuthRequest, res: Response) => {
     try {
@@ -143,6 +145,98 @@ export const getStatistics = async (req: AuthRequest, res: Response) => {
     } catch (error) {
         console.error('Error getting statistics:', error);
         res.status(500).json({ error: 'Ошибка получения статистики' });
+    }
+};
+
+export const testTask = async (req: AuthRequest, res: Response) => {
+    try {
+        const taskId = parseInt(req.params.id);
+        const { languageId, code } = req.body;
+
+        if (isNaN(taskId)) {
+            return res.status(400).json({ error: 'Неверный ID задания' });
+        }
+
+        if (!languageId || !code) {
+            return res.status(400).json({ error: 'Не указан язык или код' });
+        }
+
+        const taskResult = await pool.query('SELECT * FROM game_tasks WHERE id = $1', [taskId]);
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Задание не найдено' });
+        }
+
+        const task = taskResult.rows[0];
+        const testCases = typeof task.test_cases === 'string' ? JSON.parse(task.test_cases) : task.test_cases;
+
+        const languageMap: { [key: number]: string } = {
+            102: 'javascript',
+            109: 'python',
+            105: 'cpp',
+            51: 'csharp',
+            107: 'go',
+            98: 'php',
+            91: 'java'
+        };
+
+        const language = languageMap[languageId] || 'javascript';
+
+        const results = [];
+        for (const testCase of testCases) {
+            try {
+                const wrappedCode = wrapCodeForTesting(code, language, testCase, task.function_signature);
+                const result = await executeCode({
+                    source_code: wrappedCode,
+                    language_id: languageId,
+                    stdin: '',
+                    cpu_time_limit: 5,
+                    memory_limit: 128000
+                });
+
+                let output = '';
+                if (result.status.id === 3 && result.stdout) {
+                    output = result.stdout.trim();
+                } else if (result.stderr) {
+                    output = `Error: ${result.stderr}`;
+                } else if (result.compile_output) {
+                    output = `Compile Error: ${result.compile_output}`;
+                }
+
+                const normalizeArrayOutput = (str: string) => {
+                    return str.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
+                };
+
+                const normalizedActual = normalizeArrayOutput(output);
+                const normalizedExpected = normalizeArrayOutput(testCase.expected.trim());
+                const passed = normalizedActual === normalizedExpected;
+
+                results.push({
+                    input: testCase.input,
+                    expected: testCase.expected,
+                    output: normalizedActual || output || 'No output',
+                    passed
+                });
+            } catch (error: any) {
+                results.push({
+                    input: testCase.input,
+                    expected: testCase.expected,
+                    output: error.message || 'Ошибка выполнения',
+                    passed: false
+                });
+            }
+        }
+
+        const allPassed = results.every(r => r.passed);
+
+        res.json({
+            success: allPassed,
+            results,
+            passed: results.filter(r => r.passed).length,
+            total: results.length
+        });
+    } catch (error) {
+        console.error('Error testing task:', error);
+        res.status(500).json({ error: 'Ошибка тестирования задания' });
     }
 };
 

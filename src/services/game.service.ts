@@ -63,10 +63,22 @@ export const getAssignedTaskForLevel = async (gameId: string, level: number): Pr
     if (result.rows.length > 0) {
       taskId = result.rows[0].task_id;
     } else {
-      const taskResult = await pool.query(
-        "SELECT id FROM game_tasks WHERE level = $1 ORDER BY id LIMIT 1",
-        [level]
-      );
+      let taskResult;
+      
+      if (level === 1) {
+        taskResult = await pool.query(
+          "SELECT id FROM game_tasks WHERE difficulty IN ('easy', 'medium') ORDER BY RANDOM() LIMIT 1"
+        );
+      } else if (level === 2) {
+        taskResult = await pool.query(
+          "SELECT id FROM game_tasks WHERE difficulty IN ('medium', 'hard') ORDER BY RANDOM() LIMIT 1"
+        );
+      } else {
+        taskResult = await pool.query(
+          "SELECT id FROM game_tasks WHERE level = $1 ORDER BY RANDOM() LIMIT 1",
+          [level]
+        );
+      }
       
       if (taskResult.rows.length === 0) {
         throw new Error("No task found for this level");
