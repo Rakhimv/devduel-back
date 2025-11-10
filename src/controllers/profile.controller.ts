@@ -45,20 +45,17 @@ export const uploadAvatar = async (req: any, res: Response) => {
     const userId = req.user.id;
     const avatarPath = `/avatars/${req.file.filename}`;
 
-    // Get old avatar path before updating
     const oldAvatarRes = await pool.query(
       'SELECT avatar FROM users WHERE id = $1',
       [userId]
     );
     const oldAvatar = oldAvatarRes.rows[0]?.avatar;
 
-    // Update avatar in database
     await pool.query(
       'UPDATE users SET avatar = $1 WHERE id = $2',
       [avatarPath, userId]
     );
 
-    // Delete old avatar file if exists and is different from new one
     if (oldAvatar && oldAvatar !== avatarPath) {
       const oldAvatarPath = path.join(__dirname, '../../public', oldAvatar);
       if (fs.existsSync(oldAvatarPath)) {
@@ -80,7 +77,6 @@ export const uploadAvatar = async (req: any, res: Response) => {
   }
 };
 
-// Смена пароля
 export const changePassword = async (req: any, res: Response) => {
   try {
     const { newPassword } = req.body;

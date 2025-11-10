@@ -75,7 +75,6 @@ export const getChat = async (req: any, res: Response) => {
         const { chatId } = req.params;
 
         if (chatId === "general") {
-            // Get total participants count and online count for general chat
             const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
             const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
             
@@ -94,7 +93,6 @@ export const getChat = async (req: any, res: Response) => {
 
         const chat = await checkChatExists(chatId, req.user.id);
         if (chat) {
-            // Get user stats if it's a direct chat
             let userStats = null;
             if (chat.chat_type === 'direct' && chat.user) {
                 const statsRes = await pool.query(
@@ -124,7 +122,6 @@ export const getChat = async (req: any, res: Response) => {
 
         const userResult = await checkUserByLogin(req.user.id, chatId);
         
-        // Get user stats for direct chat
         let userStats = null;
         if (userResult.chat_type === 'direct' && userResult.targetUser) {
             const statsRes = await pool.query(
@@ -163,7 +160,6 @@ export const deleteChat = async (req: any, res: Response) => {
     try {
         const { chatId } = req.params
 
-        // Prevent deletion of general chat
         if (chatId === 'general') {
             return res.status(403).json({ success: false, message: "Cannot delete general chat" });
         }
@@ -194,7 +190,6 @@ export const clearChatHistory = async (req: any, res: Response) => {
     try {
         const { chatId } = req.params;
 
-        // Prevent clearing history of general chat
         if (chatId === 'general') {
             return res.status(403).json({ success: false, message: "Cannot clear general chat history" });
         }
@@ -340,7 +335,6 @@ export const deleteMessage = async (req: any, res: Response) => {
             return res.status(404).json({ success: false, message: "Message not found or you don't have permission to delete it" });
         }
 
-        // Emit message deletion to all chat participants
         io.to(deletedMessage.chat_id).emit("message_deleted", {
             messageId: deletedMessage.id,
             chatId: deletedMessage.chat_id

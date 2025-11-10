@@ -189,3 +189,6 @@ UPDATE users SET wins_count = 0 WHERE wins_count IS NULL;
 -- Add is_banned column to users table
 ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;
 
+-- Add reply_to_message_id column to messages table
+ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_message_id INTEGER REFERENCES messages (id) ON DELETE SET NULL;
+

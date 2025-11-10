@@ -332,7 +332,6 @@ export const submitTaskSolution = async (
         const completedTasks = completedResult.rows.length;
         const levelUp = completedTasks > 0;
 
-        // Emit progress update to both players
         await emitGameProgressUpdate(gameId);
 
         const MAX_LEVELS = 2;
@@ -363,7 +362,6 @@ export const submitTaskSolution = async (
             );
           }
 
-          // Finish the game and notify players with winner info
           await finishGame(gameId, 'finished', winnerId);
 
           return {

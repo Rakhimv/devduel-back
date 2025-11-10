@@ -54,7 +54,6 @@ export const emitGameProgressUpdate = async (gameId: string) => {
   if (!session || !globalIo) return;
 
   try {
-    // Get progress for both players
     const gameResult = await pool.query(
       "SELECT player1_id, player2_id FROM games WHERE id = $1",
       [gameId]
@@ -64,21 +63,18 @@ export const emitGameProgressUpdate = async (gameId: string) => {
 
     const game = gameResult.rows[0];
     
-    // Get progress for player1
     const p1ProgressRes = await pool.query(
       "SELECT task_id FROM game_task_completions WHERE game_id = $1 AND player_id = $2",
       [gameId, game.player1_id]
     );
     const p1Level = p1ProgressRes.rows.length + 1;
 
-    // Get progress for player2
     const p2ProgressRes = await pool.query(
       "SELECT task_id FROM game_task_completions WHERE game_id = $1 AND player_id = $2",
       [gameId, game.player2_id]
     );
     const p2Level = p2ProgressRes.rows.length + 1;
 
-    // Emit progress update to both players
     globalIo.to(`user_${game.player1_id}`).emit("game_progress_update", {
       playerLevel: p1Level,
       opponentLevel: p2Level
@@ -96,7 +92,6 @@ export const emitGameProgressUpdate = async (gameId: string) => {
 export const finishGame = async (gameId: string, reason: 'finished' | 'player_left' | 'timeout' = 'finished', winnerId?: number | null) => {
   const session = gameSessions.get(gameId);
   if (!session) {
-    // Try to get from DB
     try {
       const result = await pool.query(
         "SELECT id, player1_id, player2_id, status, duration_ms, winner_id, start_time FROM games WHERE id = $1",
@@ -113,15 +108,12 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
           [finalStatus, gameId]
         );
 
-        // Only increment game stats if game is finished (not abandoned)
         if (finalStatus === 'finished') {
-          // Increment games_count for both players
           await pool.query(
             "UPDATE users SET games_count = COALESCE(games_count, 0) + 1 WHERE id IN (SELECT player1_id FROM games WHERE id = $1 UNION SELECT player2_id FROM games WHERE id = $1)",
             [gameId]
           );
 
-          // Increment wins_count only for the winner
           if (finalWinnerId) {
             await pool.query(
               "UPDATE users SET wins_count = COALESCE(wins_count, 0) + 1 WHERE id = $1",
@@ -131,13 +123,10 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
         }
 
         if (globalIo) {
-          // Emit final progress update before ending game
           await emitGameProgressUpdate(gameId);
           
-          // Delay to ensure progress update animation has time to play (1 second for animation + buffer)
           await new Promise(resolve => setTimeout(resolve, 1200));
           
-          // Get winner info if exists
           let winnerInfo = null;
           if (finalWinnerId) {
             const winnerRes = await pool.query("SELECT id, login FROM users WHERE id = $1", [finalWinnerId]);
@@ -149,11 +138,9 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
             }
           }
 
-          // Build final session data
           const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player1_id]);
           const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player2_id]);
 
-          // Calculate actual game duration from start_time to end_time
           let actualDuration = 0;
           if (row.start_time) {
             const startTime = new Date(row.start_time).getTime();
@@ -186,7 +173,6 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
           globalIo.to(`user_${row.player1_id}`).emit("game_session_end", finalSession);
           globalIo.to(`user_${row.player2_id}`).emit("game_session_end", finalSession);
           
-          // Additional delay before returning to ensure both players received the event
           await new Promise(resolve => setTimeout(resolve, 200));
 
           const chatParticipantsRes = await pool.query(
@@ -195,7 +181,6 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
           );
 
           for (const chat of chatParticipantsRes.rows) {
-            // Calculate actual duration for notification
             let notificationDuration = actualDuration || 0;
             if (!actualDuration && row.start_time) {
               const startTime = new Date(row.start_time).getTime();
@@ -216,12 +201,10 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
     return;
   }
 
-  // Update session status before deletion
   session.status = 'finished';
   session.timeRemaining = 0;
   session.gameResult = reason === 'player_left' ? 'player_left' : reason === 'timeout' ? 'timeout' : 'completed';
 
-  // Get winner info if provided
   if (winnerId) {
     try {
       const winnerRes = await pool.query("SELECT id, login FROM users WHERE id = $1", [winnerId]);
@@ -236,7 +219,6 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
       console.error("Error getting winner info:", error);
     }
   } else {
-    // Try to get winner from DB
     try {
       const gameResult = await pool.query("SELECT winner_id FROM games WHERE id = $1", [gameId]);
       if (gameResult.rows.length > 0 && gameResult.rows[0].winner_id) {
@@ -252,7 +234,6 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
     }
   }
 
-  // Calculate actual game duration from start_time
   let actualDuration = 0;
   if (session.startTime) {
     const startTime = new Date(session.startTime).getTime();
@@ -267,15 +248,12 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
       [finalStatus, gameId]
     );
 
-    // Only increment game stats if game is finished (not abandoned)
     if (finalStatus === 'finished') {
-      // Increment games_count for both players
       await pool.query(
         "UPDATE users SET games_count = COALESCE(games_count, 0) + 1 WHERE id IN (SELECT player1_id FROM games WHERE id = $1 UNION SELECT player2_id FROM games WHERE id = $1)",
         [gameId]
       );
 
-      // Increment wins_count only for the winner
       if (winnerId) {
         await pool.query(
           "UPDATE users SET wins_count = COALESCE(wins_count, 0) + 1 WHERE id = $1",
@@ -288,13 +266,10 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
   }
 
   if (globalIo) {
-    // Emit final progress update before ending game
     await emitGameProgressUpdate(gameId);
     
-    // Delay to ensure progress update animation has time to play (1 second for animation + buffer)
     await new Promise(resolve => setTimeout(resolve, 1200));
     
-    // Send final session with winner info - make sure it has all required fields
     const finalSession = {
       ...session,
       id: session.id,
@@ -306,7 +281,6 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
     globalIo.to(`user_${session.player1.id}`).emit("game_session_end", finalSession);
     globalIo.to(`user_${session.player2.id}`).emit("game_session_end", finalSession);
 
-    // Additional delay before deleting to ensure both players received the event
     await new Promise(resolve => setTimeout(resolve, 200));
 
     const chatParticipantsRes = await pool.query(
@@ -333,8 +307,6 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
     }
   }
 
-  // Delete session after ensuring both players received the final update
-  // Add small delay to ensure socket events are delivered
   setTimeout(() => {
     gameSessions.delete(gameId);
   }, 500);
@@ -412,7 +384,6 @@ export const initChatSocket = async (io: Server) => {
     socket.join(`user_${socket.data.user.id}`);
     console.log(`User ${socket.data.user.id} joined room user_${socket.data.user.id}`);
     
-    // Emit updated general chat participant count
     const updateGeneralChatCount = async () => {
       const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
       const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
@@ -434,7 +405,6 @@ export const initChatSocket = async (io: Server) => {
       socket.join(chatId);
       socket.data.currentChatId = chatId;
       
-      // If joining general chat, emit updated counts
       if (chatId === 'general') {
         const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
         const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
@@ -463,7 +433,6 @@ export const initChatSocket = async (io: Server) => {
         return;
       }
 
-      // Validate reply_to_message_id if provided
       let replyToMessage = null;
       if (replyToMessageId) {
         const replyCheck = await pool.query(
@@ -574,45 +543,47 @@ export const initChatSocket = async (io: Server) => {
               [existingInviteId]
             );
             
-            if (chatId) {
-              io.to(chatId).emit("game_invite_expired", { inviteId: existingInviteId });
+            const existingPrivateChatRes = await pool.query(
+              "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
+              [[socket.data.user.id, toUserId]]
+            );
+            
+            if (existingPrivateChatRes.rows.length > 0) {
+              io.to(existingPrivateChatRes.rows[0].id).emit("game_invite_expired", { inviteId: existingInviteId });
             }
             
             io.to(`user_${toUserId}`).emit("game_invite_expired", { inviteId: existingInviteId });
+            io.to(`user_${socket.data.user.id}`).emit("game_invite_expired", { inviteId: existingInviteId });
           }
         }
 
-        let finalChatId = chatId;
+        let finalChatId: string;
+        const existingChatRes = await pool.query(
+          "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
+          [[socket.data.user.id, toUserId]]
+        );
         
-        if (!chatId || chatId === 'null') {
-          const existingChatRes = await pool.query(
-            "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
-            [[socket.data.user.id, toUserId]]
+        if (existingChatRes.rows.length > 0) {
+          finalChatId = existingChatRes.rows[0].id;
+        } else {
+          const newChatId = uuidv4();
+          const newChatRes = await pool.query(
+            "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) RETURNING id",
+            [newChatId, 'private', 'direct']
           );
+          finalChatId = newChatRes.rows[0].id;
           
-          if (existingChatRes.rows.length > 0) {
-            finalChatId = existingChatRes.rows[0].id;
-          } else {
-            const chatId = uuidv4();
-            const newChatRes = await pool.query(
-              "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) RETURNING id",
-              [chatId, 'private', 'direct']
-            );
-            finalChatId = newChatRes.rows[0].id;
-            
-            await pool.query(
-              "INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)",
-              [finalChatId, socket.data.user.id, toUserId]
-            );
+          await pool.query(
+            "INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)",
+            [finalChatId, socket.data.user.id, toUserId]
+          );
 
-            io.to(`user_${socket.data.user.id}`).emit("chat_created", { chatId: finalChatId });
-            io.to(`user_${toUserId}`).emit("chat_created", { chatId: finalChatId });
-          }
+          io.to(`user_${socket.data.user.id}`).emit("chat_created", { chatId: finalChatId });
+          io.to(`user_${toUserId}`).emit("chat_created", { chatId: finalChatId });
         }
 
         const inviteId = uuidv4();
         
-        // Get avatars and names for both users
         const fromUserRes = await pool.query("SELECT name, login, avatar FROM users WHERE id = $1", [socket.data.user.id]);
         const toUserRes = await pool.query("SELECT name, login, avatar FROM users WHERE id = $1", [toUserId]);
         
@@ -681,33 +652,44 @@ export const initChatSocket = async (io: Server) => {
           }
         });
 
-        // Handle chat update for general or private chats
-        if (finalChatId === 'general') {
-          const allUsers = await pool.query("SELECT id FROM users WHERE is_online = TRUE");
-          for (const user of allUsers.rows) {
-            const unread_count = await getUnreadCount(finalChatId, user.id);
-            io.to(`user_${user.id}`).emit("chat_update", {
-              chatId: finalChatId,
-              last_message: message.text,
-              last_timestamp: message.timestamp,
-              unread_count,
-            });
+        io.to(`user_${toUserId}`).emit("new_message", {
+          id: message.id,
+          chat_id: finalChatId,
+          user_id: socket.data.user.id,
+          username: socket.data.user.login,
+          name: userInfo?.name || socket.data.user.name,
+          avatar: userInfo?.avatar || null,
+          text: message.text,
+          timestamp: message.timestamp,
+          is_read: false,
+          message_type: 'game_invite',
+          game_invite_data: {
+            invite_id: inviteId,
+            from_user_id: socket.data.user.id,
+            from_username: fromUser?.login || socket.data.user.login,
+            from_name: fromUser?.name || socket.data.user.name,
+            from_avatar: fromUser?.avatar || null,
+            to_user_id: toUserId,
+            to_username: toUser?.login || 'Unknown',
+            to_name: toUser?.name || 'Unknown',
+            to_avatar: toUser?.avatar || null,
+            status: 'pending'
           }
-        } else {
-          const participants = await pool.query(
-            "SELECT user_id FROM chat_participants WHERE chat_id = $1",
-            [finalChatId]
-          );
-          
-          for (const participant of participants.rows) {
-            const unread_count = await getUnreadCount(finalChatId, participant.user_id);
-            io.to(`user_${participant.user_id}`).emit("chat_update", {
-              chatId: finalChatId,
-              last_message: message.text,
-              last_timestamp: message.timestamp,
-              unread_count,
-            });
-          }
+        });
+
+        const participants = await pool.query(
+          "SELECT user_id FROM chat_participants WHERE chat_id = $1",
+          [finalChatId]
+        );
+        
+        for (const participant of participants.rows) {
+          const unread_count = await getUnreadCount(finalChatId, participant.user_id);
+          io.to(`user_${participant.user_id}`).emit("chat_update", {
+            chatId: finalChatId,
+            last_message: message.text,
+            last_timestamp: message.timestamp,
+            unread_count,
+          });
         }
 
         setTimeout(async () => {
@@ -720,6 +702,8 @@ export const initChatSocket = async (io: Server) => {
             );
             
             io.to(finalChatId).emit("game_invite_expired", { inviteId });
+            io.to(`user_${toUserId}`).emit("game_invite_expired", { inviteId });
+            io.to(`user_${socket.data.user.id}`).emit("game_invite_expired", { inviteId });
           }
         }, 30000);
 
@@ -739,14 +723,12 @@ export const initChatSocket = async (io: Server) => {
           return;
         }
 
-        // First check in-memory gameSessions and verify with DB
         const existingSessionsInMemory = Array.from(gameSessions.values()).filter(session =>
           ((session.player1.id === invite.fromUserId || session.player2.id === invite.fromUserId) ||
            (session.player1.id === invite.toUserId || session.player2.id === invite.toUserId)) &&
           (session.status === 'waiting' || session.status === 'ready' || session.status === 'in_progress')
         );
 
-        // Verify sessions in memory are still active in DB, clean up if not
         for (const session of existingSessionsInMemory) {
           try {
             const dbCheck = await pool.query(
@@ -757,13 +739,11 @@ export const initChatSocket = async (io: Server) => {
             if (dbCheck.rows.length === 0 || 
                 dbCheck.rows[0].status === 'finished' || 
                 dbCheck.rows[0].status === 'abandoned') {
-              // Session is finished in DB, remove from memory
               console.log(`Cleaning up finished session ${session.id} from memory`);
               gameSessions.delete(session.id);
             } else if (dbCheck.rows[0].status === 'waiting' || 
                        dbCheck.rows[0].status === 'ready' || 
                        dbCheck.rows[0].status === 'in_progress') {
-              // Session is truly active
               console.log(`Active game session ${session.id} exists in memory and DB for players, rejecting invite`);
               io.to(`user_${invite.fromUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
               io.to(`user_${invite.toUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
@@ -774,7 +754,6 @@ export const initChatSocket = async (io: Server) => {
           }
         }
 
-        // Then check database for any other active games
         try {
           const activeGamesCheck = await pool.query(
             `SELECT id, player1_id, player2_id, status FROM games 
@@ -988,12 +967,10 @@ export const initChatSocket = async (io: Server) => {
 
         const gameStatus = dbCheck.rows[0].status;
         
-        // If game is finished or abandoned, send game_session_end to properly disconnect player
         if (gameStatus === 'abandoned' || gameStatus === 'finished') {
           if (gameStatus === 'abandoned') {
             socket.emit("game_session_end", { reason: 'player_left' });
           } else {
-            // Game is finished - send complete session data if available
             try {
               const finishedGameRes = await pool.query(
                 "SELECT id, player1_id, player2_id, status, start_time, duration_ms, winner_id, end_time FROM games WHERE id = $1",
@@ -1104,7 +1081,6 @@ export const initChatSocket = async (io: Server) => {
       }
 
       if (session) {
-        // Double-check session status in case it changed
         if (session.status === 'finished' || session.status === 'abandoned') {
           socket.emit("game_session_end", session.status === 'abandoned' ? { reason: 'player_left' } : { ...session, reason: 'finished' });
           return;
@@ -1177,11 +1153,9 @@ export const initChatSocket = async (io: Server) => {
     socket.on("disconnect", async () => {
       console.log(`User disconnected: ${socket.data.user.id}`);
       
-      // Update is_online status
       await pool.query("UPDATE users SET is_online = FALSE WHERE id = $1", [socket.data.user.id]);
       io.emit("user_status", { userId: socket.data.user.id, isOnline: false });
       
-      // Emit updated general chat participant count
       const totalCountRes = await pool.query("SELECT COUNT(*) as total FROM users");
       const onlineCountRes = await pool.query("SELECT COUNT(*) as online FROM users WHERE is_online = TRUE");
       io.to('general').emit("general_chat_update", {

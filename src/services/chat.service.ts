@@ -28,7 +28,6 @@ export const saveMessageToDB = async ({
         );
         const message = messageRes.rows[0];
 
-        // Check message count and delete old messages if over 100
         const countRes = await client.query(
             "SELECT COUNT(*) as count FROM messages WHERE chat_id = $1",
             [chatId]
@@ -116,7 +115,6 @@ export const getMessagesFromDB = async (chatId: string, userId: number, limit: n
         [chatId, userId, limit, offset]
     );
     
-    // Update avatars in game_invite_data with current avatars from users table
     const rows = res.rows;
     for (const row of rows) {
         if (row.game_invite_data) {
