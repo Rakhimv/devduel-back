@@ -257,13 +257,19 @@ export const checkChatExists = async (chatId: string, userId: number) => {
 export const checkUserByLogin = async (currentUserId: number, targetLogin: string) => {
     const userRes = await pool.query(
         `SELECT id, name, login, email, is_online, 
-         FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT as updated_at, 
+         COALESCE(FLOOR(EXTRACT(EPOCH FROM updated_at) * 1000)::BIGINT, 0) as updated_at, 
          avatar 
          FROM users WHERE login = $1`, 
         [targetLogin]
     );
     if (!userRes.rows.length) throw new Error("User not found");
     const targetUser = userRes.rows[0];
+    
+    // Ensure updated_at is a number, not a string
+    if (targetUser.updated_at !== null && targetUser.updated_at !== undefined) {
+        targetUser.updated_at = Number(targetUser.updated_at);
+    }
+    
     if (targetUser.id === currentUserId) throw new Error("Cannot create chat with yourself");
 
     const chatRes = await pool.query(

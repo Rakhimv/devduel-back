@@ -122,6 +122,11 @@ export const getChat = async (req: any, res: Response) => {
 
         const userResult = await checkUserByLogin(req.user.id, chatId);
         
+        // Debug: check if updated_at is present
+        if (userResult.targetUser && !userResult.targetUser.updated_at) {
+            console.warn('updated_at missing in targetUser from checkUserByLogin:', userResult.targetUser);
+        }
+        
         let userStats = null;
         if (userResult.chat_type === 'direct' && userResult.targetUser) {
             const statsRes = await pool.query(
@@ -136,13 +141,19 @@ export const getChat = async (req: any, res: Response) => {
             }
         }
         
+        // Ensure updated_at is properly included in the response
+        const userData = userResult.targetUser ? {
+            ...userResult.targetUser,
+            updated_at: userResult.targetUser.updated_at || null
+        } : null;
+
         return res.json({
             chatId: userResult.chatId || chatId,
             chatExists: userResult.chatExists,
             privacy_type: userResult.privacy_type,
             chat_type: userResult.chat_type,
-            targetUser: userResult.targetUser,
-            user: userResult.targetUser,
+            targetUser: userData,
+            user: userData,
             display_name: userResult.display_name,
             canSend: true,
             userStats

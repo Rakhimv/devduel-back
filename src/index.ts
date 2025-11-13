@@ -15,7 +15,9 @@ export const io = new Server(server, {
     origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173",
     methods: ["GET", "POST"],
     credentials: true
-  }
+  },
+  transports: ['websocket', 'polling'],
+  allowEIO3: true
 });
 
 const resetOnlineStatus = async () => {
@@ -32,4 +34,5 @@ resetOnlineStatus().then(async () => {
 
 
 const PORT = process.env.PORT
-server.listen(PORT, () => console.log("Сервер запущен на порту ", PORT))
+const HOST = process.env.HOST
+server.listen(PORT, Number(HOST), () => console.log("Сервер запущен на порту ", PORT))

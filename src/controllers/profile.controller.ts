@@ -99,3 +99,33 @@ export const changePassword = async (req: any, res: Response) => {
     res.status(500).json({ error: 'Failed to change password' });
   }
 };
+
+export const changeName = async (req: any, res: Response) => {
+  try {
+    const { name } = req.body;
+    const userId = req.user.id;
+
+    if (!name || name.trim().length === 0) {
+      return res.status(400).json({ error: 'Name cannot be empty' });
+    }
+
+    if (name.length > 50) {
+      return res.status(400).json({ error: 'Name must be less than 50 characters' });
+    }
+
+    await pool.query(
+      'UPDATE users SET name = $1 WHERE id = $2',
+      [name.trim(), userId]
+    );
+
+    const result = await pool.query(
+      'SELECT name FROM users WHERE id = $1',
+      [userId]
+    );
+
+    res.json({ message: 'Name changed successfully', name: result.rows[0].name });
+  } catch (error) {
+    console.error('Error changing name:', error);
+    res.status(500).json({ error: 'Failed to change name' });
+  }
+};
