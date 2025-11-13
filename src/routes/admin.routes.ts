@@ -1,6 +1,6 @@
 import { Router } from "express";
 import { adminMiddleware } from "../middlewares/admin.middleware";
-import { getUsers, banUser, unbanUser, getTasks, createTask, updateTask, deleteTask, getStatistics, testTask } from "../controllers/admin.controller";
+import { getUsers, banUser, unbanUser, getTasks, createTask, updateTask, deleteTask, getStatistics, testTask, getMaintenanceMode, setMaintenanceMode } from "../controllers/admin.controller";
 
 const router = Router();
 
@@ -17,6 +17,9 @@ router.delete("/tasks/:id", deleteTask);
 router.post("/tasks/:id/test", testTask);
 
 router.get("/statistics", getStatistics);
+
+router.get("/maintenance-mode", getMaintenanceMode);
+router.post("/maintenance-mode", setMaintenanceMode);
 
 export default router;
 

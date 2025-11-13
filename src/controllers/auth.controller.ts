@@ -279,9 +279,6 @@ export const yandexOauthHandler = async (req: Request, res: Response) => {
 
 
 
-// GOOGLE OAUTH 
-
-
 export const googleOauthHandler = async (req: Request, res: Response) => {
   try {
     if (req.query.error) {

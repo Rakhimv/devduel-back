@@ -543,13 +543,17 @@ export const initChatSocket = async (io: Server) => {
               [existingInviteId]
             );
             
-            const existingPrivateChatRes = await pool.query(
-              "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
-              [[socket.data.user.id, toUserId]]
-            );
-            
-            if (existingPrivateChatRes.rows.length > 0) {
-              io.to(existingPrivateChatRes.rows[0].id).emit("game_invite_expired", { inviteId: existingInviteId });
+            if (chatId && chatId !== 'general') {
+              const existingPrivateChatRes = await pool.query(
+                "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
+                [[socket.data.user.id, toUserId]]
+              );
+              
+              if (existingPrivateChatRes.rows.length > 0) {
+                io.to(existingPrivateChatRes.rows[0].id).emit("game_invite_expired", { inviteId: existingInviteId });
+              }
+            } else if (chatId === 'general') {
+              io.to('general').emit("game_invite_expired", { inviteId: existingInviteId });
             }
             
             io.to(`user_${toUserId}`).emit("game_invite_expired", { inviteId: existingInviteId });
@@ -558,28 +562,66 @@ export const initChatSocket = async (io: Server) => {
         }
 
         let finalChatId: string;
-        const existingChatRes = await pool.query(
-          "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
-          [[socket.data.user.id, toUserId]]
-        );
         
-        if (existingChatRes.rows.length > 0) {
-          finalChatId = existingChatRes.rows[0].id;
-        } else {
-          const newChatId = uuidv4();
-          const newChatRes = await pool.query(
-            "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) RETURNING id",
-            [newChatId, 'private', 'direct']
+        if (chatId === 'general') {
+          finalChatId = 'general';
+        } else if (chatId) {
+          const chatCheck = await pool.query(
+            "SELECT id FROM chats WHERE id = $1 AND (id = 'general' OR id IN (SELECT chat_id FROM chat_participants WHERE user_id = $2))",
+            [chatId, socket.data.user.id]
           );
-          finalChatId = newChatRes.rows[0].id;
           
-          await pool.query(
-            "INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)",
-            [finalChatId, socket.data.user.id, toUserId]
-          );
+          if (chatCheck.rows.length > 0) {
+            finalChatId = chatId;
+          } else {
+            const existingChatRes = await pool.query(
+              "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
+              [[socket.data.user.id, toUserId]]
+            );
+            
+            if (existingChatRes.rows.length > 0) {
+              finalChatId = existingChatRes.rows[0].id;
+            } else {
+              const newChatId = uuidv4();
+              const newChatRes = await pool.query(
+                "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) RETURNING id",
+                [newChatId, 'private', 'direct']
+              );
+              finalChatId = newChatRes.rows[0].id;
+              
+              await pool.query(
+                "INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)",
+                [finalChatId, socket.data.user.id, toUserId]
+              );
 
-          io.to(`user_${socket.data.user.id}`).emit("chat_created", { chatId: finalChatId });
-          io.to(`user_${toUserId}`).emit("chat_created", { chatId: finalChatId });
+              io.to(`user_${socket.data.user.id}`).emit("chat_created", { chatId: finalChatId });
+              io.to(`user_${toUserId}`).emit("chat_created", { chatId: finalChatId });
+            }
+          }
+        } else {
+          const existingChatRes = await pool.query(
+            "SELECT id FROM chats WHERE privacy_type = 'private' AND id IN (SELECT chat_id FROM chat_participants WHERE user_id = ANY($1) GROUP BY chat_id HAVING COUNT(*) = 2)",
+            [[socket.data.user.id, toUserId]]
+          );
+          
+          if (existingChatRes.rows.length > 0) {
+            finalChatId = existingChatRes.rows[0].id;
+          } else {
+            const newChatId = uuidv4();
+            const newChatRes = await pool.query(
+              "INSERT INTO chats (id, privacy_type, chat_type) VALUES ($1, $2, $3) RETURNING id",
+              [newChatId, 'private', 'direct']
+            );
+            finalChatId = newChatRes.rows[0].id;
+            
+            await pool.query(
+              "INSERT INTO chat_participants (chat_id, user_id) VALUES ($1, $2), ($1, $3)",
+              [finalChatId, socket.data.user.id, toUserId]
+            );
+
+            io.to(`user_${socket.data.user.id}`).emit("chat_created", { chatId: finalChatId });
+            io.to(`user_${toUserId}`).emit("chat_created", { chatId: finalChatId });
+          }
         }
 
         const inviteId = uuidv4();
@@ -652,31 +694,6 @@ export const initChatSocket = async (io: Server) => {
           }
         });
 
-        io.to(`user_${toUserId}`).emit("new_message", {
-          id: message.id,
-          chat_id: finalChatId,
-          user_id: socket.data.user.id,
-          username: socket.data.user.login,
-          name: userInfo?.name || socket.data.user.name,
-          avatar: userInfo?.avatar || null,
-          text: message.text,
-          timestamp: message.timestamp,
-          is_read: false,
-          message_type: 'game_invite',
-          game_invite_data: {
-            invite_id: inviteId,
-            from_user_id: socket.data.user.id,
-            from_username: fromUser?.login || socket.data.user.login,
-            from_name: fromUser?.name || socket.data.user.name,
-            from_avatar: fromUser?.avatar || null,
-            to_user_id: toUserId,
-            to_username: toUser?.login || 'Unknown',
-            to_name: toUser?.name || 'Unknown',
-            to_avatar: toUser?.avatar || null,
-            status: 'pending'
-          }
-        });
-
         const participants = await pool.query(
           "SELECT user_id FROM chat_participants WHERE chat_id = $1",
           [finalChatId]
@@ -724,8 +741,8 @@ export const initChatSocket = async (io: Server) => {
         }
 
         const existingSessionsInMemory = Array.from(gameSessions.values()).filter(session =>
-          ((session.player1.id === invite.fromUserId || session.player2.id === invite.fromUserId) ||
-           (session.player1.id === invite.toUserId || session.player2.id === invite.toUserId)) &&
+          ((session.player1.id === invite.fromUserId && session.player2.id === invite.toUserId) ||
+           (session.player1.id === invite.toUserId && session.player2.id === invite.fromUserId)) &&
           (session.status === 'waiting' || session.status === 'ready' || session.status === 'in_progress')
         );
 
@@ -745,8 +762,8 @@ export const initChatSocket = async (io: Server) => {
                        dbCheck.rows[0].status === 'ready' || 
                        dbCheck.rows[0].status === 'in_progress') {
               console.log(`Active game session ${session.id} exists in memory and DB for players, rejecting invite`);
-              io.to(`user_${invite.fromUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
-              io.to(`user_${invite.toUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
+              io.to(`user_${invite.fromUserId}`).emit("game_invite_error", { message: 'Один из игроков уже в игре' });
+              io.to(`user_${invite.toUserId}`).emit("game_invite_error", { message: 'Один из игроков уже в игре' });
               return;
             }
           } catch (error) {
@@ -757,15 +774,15 @@ export const initChatSocket = async (io: Server) => {
         try {
           const activeGamesCheck = await pool.query(
             `SELECT id, player1_id, player2_id, status FROM games 
-             WHERE ((player1_id = $1 OR player2_id = $1) OR (player1_id = $2 OR player2_id = $2))
+             WHERE ((player1_id = $1 AND player2_id = $2) OR (player1_id = $2 AND player2_id = $1))
              AND status IN ('waiting', 'ready', 'in_progress')`,
             [invite.fromUserId, invite.toUserId]
           );
 
           if (activeGamesCheck.rows.length > 0) {
-            console.log(`Active game exists in DB for players, rejecting invite`);
-            io.to(`user_${invite.fromUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
-            io.to(`user_${invite.toUserId}`).emit("invite_error", { message: 'Один из игроков уже в игре' });
+            console.log(`Active game exists in DB between these two players, rejecting invite`);
+            io.to(`user_${invite.fromUserId}`).emit("game_invite_error", { message: 'Один из игроков уже в игре' });
+            io.to(`user_${invite.toUserId}`).emit("game_invite_error", { message: 'Один из игроков уже в игре' });
             return;
           }
         } catch (error) {
@@ -907,7 +924,6 @@ export const initChatSocket = async (io: Server) => {
             if (remaining <= 0) {
               clearInterval(gameTimer);
               
-              // Проверяем, что игра еще не завершена
               const gameStatusCheck = await pool.query(
                 "SELECT status FROM games WHERE id = $1",
                 [sessionId]

@@ -122,7 +122,6 @@ export const getChat = async (req: any, res: Response) => {
 
         const userResult = await checkUserByLogin(req.user.id, chatId);
         
-        // Debug: check if updated_at is present
         if (userResult.targetUser && !userResult.targetUser.updated_at) {
             console.warn('updated_at missing in targetUser from checkUserByLogin:', userResult.targetUser);
         }
@@ -141,7 +140,6 @@ export const getChat = async (req: any, res: Response) => {
             }
         }
         
-        // Ensure updated_at is properly included in the response
         const userData = userResult.targetUser ? {
             ...userResult.targetUser,
             updated_at: userResult.targetUser.updated_at || null

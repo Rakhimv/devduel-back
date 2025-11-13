@@ -192,3 +192,17 @@ ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;
 -- Add reply_to_message_id column to messages table
 ALTER TABLE messages ADD COLUMN IF NOT EXISTS reply_to_message_id INTEGER REFERENCES messages (id) ON DELETE SET NULL;
 
+-- ============================================
+-- APP SETTINGS TABLE
+-- ============================================
+CREATE TABLE IF NOT EXISTS app_settings (
+    key VARCHAR(100) PRIMARY KEY,
+    value JSONB NOT NULL,
+    updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
+);
+
+-- Insert default maintenance mode setting
+INSERT INTO app_settings (key, value) 
+VALUES ('maintenance_mode', '{"enabled": false}'::jsonb)
+ON CONFLICT (key) DO NOTHING;
+

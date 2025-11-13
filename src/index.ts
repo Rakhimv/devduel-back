@@ -22,7 +22,6 @@ export const io = new Server(server, {
 
 const resetOnlineStatus = async () => {
   try {
-    // await pool.query("UPDATE users SET is_online = FALSE");
   } catch (error) {
     console.error("Ошибка при сбросе статуса пользователей:", error);
   }

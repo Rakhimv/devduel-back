@@ -148,6 +148,47 @@ export const getStatistics = async (req: AuthRequest, res: Response) => {
     }
 };
 
+export const getMaintenanceMode = async (req: AuthRequest, res: Response) => {
+    try {
+        const result = await pool.query(
+            "SELECT value FROM app_settings WHERE key = 'maintenance_mode'"
+        );
+        
+        if (result.rows.length === 0) {
+            return res.json({ enabled: false });
+        }
+        
+        const setting = result.rows[0].value;
+        res.json({ enabled: setting.enabled || false });
+    } catch (error) {
+        console.error('Error getting maintenance mode:', error);
+        res.status(500).json({ error: 'Ошибка получения режима обслуживания' });
+    }
+};
+
+export const setMaintenanceMode = async (req: AuthRequest, res: Response) => {
+    try {
+        const { enabled } = req.body;
+        
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ error: 'Неверное значение enabled' });
+        }
+        
+        await pool.query(
+            `INSERT INTO app_settings (key, value, updated_at) 
+             VALUES ('maintenance_mode', $1::jsonb, NOW())
+             ON CONFLICT (key) 
+             DO UPDATE SET value = $1::jsonb, updated_at = NOW()`,
+            [JSON.stringify({ enabled })]
+        );
+        
+        res.json({ enabled, message: `Режим обслуживания ${enabled ? 'включен' : 'выключен'}` });
+    } catch (error) {
+        console.error('Error setting maintenance mode:', error);
+        res.status(500).json({ error: 'Ошибка установки режима обслуживания' });
+    }
+};
+
 export const testTask = async (req: AuthRequest, res: Response) => {
     try {
         const taskId = parseInt(req.params.id);

@@ -265,7 +265,6 @@ export const checkUserByLogin = async (currentUserId: number, targetLogin: strin
     if (!userRes.rows.length) throw new Error("User not found");
     const targetUser = userRes.rows[0];
     
-    // Ensure updated_at is a number, not a string
     if (targetUser.updated_at !== null && targetUser.updated_at !== undefined) {
         targetUser.updated_at = Number(targetUser.updated_at);
     }

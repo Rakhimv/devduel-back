@@ -118,9 +118,6 @@ export const getYandexUser = async ({ access_token }: { access_token: string }):
 
 
 
-// GOOGLE OAUTH
-
-
 interface GoogleOauthToken {
   access_token: string;
 }
