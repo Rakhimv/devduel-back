@@ -21,8 +21,10 @@ jobs:
       - name: Deploy to server
         run: |
           ssh -o StrictHostKeyChecking=no root@185.104.113.48 "
-            cd /home/azicode/devduel &&
-            git pull origin main &&
-            npm install &&
+            mkdir -p /home/azicode/devduel
+            cd /home/azicode/devduel
+            [ ! -d .git ] && git clone git@github.com:Rakhimv/devduel-back.git . || true
+            git pull origin main
+            npm install
             pm2 restart devduel || pm2 start 'npm start' --name devduel
           "
