@@ -20,7 +20,9 @@ jobs:
 
       - name: Deploy to server
         run: |
-          cd /home/azicode/devduel &&
-          git pull origin main &&
-          npm install &&
-          pm2 restart devduel || pm2 start 'npm start' --name devduel
+          ssh -o StrictHostKeyChecking=no root@185.104.113.48 "
+            cd /home/azicode/devduel &&
+            git pull origin main &&
+            npm install &&
+            pm2 restart devduel || pm2 start 'npm start' --name devduel
+          "
