@@ -35,4 +35,5 @@ resetOnlineStatus().then(async () => {
 
 const PORT = process.env.PORT
 const HOST = process.env.HOST
+
 server.listen(PORT, Number(HOST), () => console.log("Сервер запущен на порту ", PORT))

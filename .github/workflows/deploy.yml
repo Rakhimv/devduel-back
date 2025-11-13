@@ -26,5 +26,5 @@ jobs:
             [ ! -d .git ] && git clone git@github.com:Rakhimv/devduel-back.git . || true
             git pull origin main
             npm install
-            pm2 restart devduel || pm2 start 'npm start' --name devduel
+            pm2 restart devduel || pm2 start 'npm run dev' --name devduel
           "
