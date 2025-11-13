@@ -2,7 +2,7 @@ name: Deploy to VPS
 
 on:
   push:
-    branches: [ main ]  # или master
+    branches: [ main ]
 
 jobs:
   deploy:
@@ -20,9 +20,7 @@ jobs:
 
       - name: Deploy to server
         run: |
-          ssh -o StrictHostKeyChecking=no root@185.104.113.48 "
-            cd /home/azicode/devduel &&
-            git pull origin main &&
-            npm install &&
-            pm2 restart devduel || pm2 start 'npm start' --name devduel
-          " 
+          cd /home/azicode/devduel &&
+          git pull origin main &&
+          npm install &&
+          pm2 restart devduel || pm2 start 'npm start' --name devduel
