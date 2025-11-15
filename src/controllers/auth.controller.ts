@@ -278,50 +278,41 @@ export const yandexOauthHandler = async (req: Request, res: Response) => {
 
 
 
-
 export const googleOauthHandler = async (req: Request, res: Response) => {
   try {
     if (req.query.error) {
       return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=auth_failed`);
     }
 
-    const code = req.query.code as string;
+    const code = (req.query.code as string) || (req.body.code as string);
     if (!code) {
+      console.error('No code provided in Google OAuth callback', { query: req.query, body: req.body });
       return res.status(401).json({ error: 'No code provided' });
     }
 
     const { access_token } = await getGoogleOauthToken({ code });
     const googleUser = await getGoogleUser({ access_token });
     const user = await findOrCreateUser_Google(googleUser);
+
     if (!user) {
       return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
     }
+
     const token = generateToken(user.name, user.id, user.login);
     const refreshToken = generateRefreshToken(user.id);
-
     await saveRefreshToken(user.id, refreshToken);
 
-    res.cookie('token', token, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 15 * 60 * 1000
-    });
+    res.cookie('token', token, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 15 * 60 * 1000 });
+    res.cookie('refreshToken', refreshToken, { httpOnly: true, secure: process.env.NODE_ENV === 'production', sameSite: 'strict', maxAge: 180 * 24 * 60 * 60 * 1000 });
 
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 180 * 24 * 60 * 60 * 1000
-    });
-
-    const redirectUrl = req.query.state
-      ? `${process.env.FRONTEND_ORIGIN}/app${req.query.state}`
+    const state = req.query.state as string;
+    const redirectUrl = state
+      ? `${process.env.FRONTEND_ORIGIN}/app${state}`
       : `${process.env.FRONTEND_ORIGIN}/app`;
+
     return res.redirect(redirectUrl);
   } catch (err: any) {
-    console.error(err.message);
+    console.error('Google OAuth Error:', err.message, err.stack);
     return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
   }
 };
-
