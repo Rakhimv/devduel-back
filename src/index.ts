@@ -12,7 +12,10 @@ import { pool } from "./config/db"
 const server = http.createServer(app)
 export const io = new Server(server, {
   cors: {
-    origin: [process.env.FRONTEND_ORIGIN, "https://devduel-phi.vercel.app/"] || "http://localhost:5173",
+    origin: [
+      process.env.FRONTEND_ORIGIN || "http://localhost:5173",
+      "https://devduel-phi.vercel.app/"
+    ],
     methods: ["GET", "POST"],
     credentials: true
   },

@@ -1146,6 +1146,8 @@ export const initChatSocket = async (io: Server) => {
       socket.emit("session_validation_result", isValid);
     });
 
+
+    
     socket.on("leave_game", async ({ sessionId }) => {
       await finishGame(sessionId, 'player_left');
     });
