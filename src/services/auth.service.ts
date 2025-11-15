@@ -142,6 +142,7 @@ export const getGoogleOauthToken = async ({ code }: { code: string }): Promise<G
     redirect_uri: process.env.GOOGLE_OAUTH_REDIRECT_URL,
     grant_type: 'authorization_code',
   });
+  console.log(data)
   try {
     const { data: response } = await axios.post(rootUrl, data, {
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
