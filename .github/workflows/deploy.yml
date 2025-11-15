@@ -34,7 +34,7 @@ jobs:
             bun install
 
             pm2 delete devduel || true
-            pm2 start "bun run src/index.ts" --name "devduel" --watch
+            pm2 start "bun run src/index.ts" --name "devduel" 
 
             pm2 save
 
