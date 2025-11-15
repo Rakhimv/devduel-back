@@ -213,8 +213,8 @@ export const githubOauthHandler = async (req: Request, res: Response) => {
     });
 
     const redirectUrl = req.query.state
-      ? `${process.env.FRONTEND_ORIGIN}${req.query.state}`
-      : `${process.env.FRONTEND_ORIGIN}/`;
+      ? `${process.env.FRONTEND_ORIGIN}/app${req.query.state}`
+      : `${process.env.FRONTEND_ORIGIN}/app`;
     return res.redirect(redirectUrl);
   } catch (err: any) {
     return res.redirect(`${process.env.FRONTEND_ORIGIN}/login?error=server_error`);
@@ -265,8 +265,8 @@ export const yandexOauthHandler = async (req: Request, res: Response) => {
     });
 
     const redirectUrl = req.query.state
-      ? `${process.env.FRONTEND_ORIGIN}${req.query.state}`
-      : `${process.env.FRONTEND_ORIGIN}/`;
+      ? `${process.env.FRONTEND_ORIGIN}/app${req.query.state}`
+      : `${process.env.FRONTEND_ORIGIN}/app`;
     return res.redirect(redirectUrl);
   } catch (err: any) {
     console.error(err.message);
@@ -316,8 +316,8 @@ export const googleOauthHandler = async (req: Request, res: Response) => {
     });
 
     const redirectUrl = req.query.state
-      ? `${process.env.FRONTEND_ORIGIN}${req.query.state}`
-      : `${process.env.FRONTEND_ORIGIN}/`;
+      ? `${process.env.FRONTEND_ORIGIN}/app${req.query.state}`
+      : `${process.env.FRONTEND_ORIGIN}/app`;
     return res.redirect(redirectUrl);
   } catch (err: any) {
     console.error(err.message);
