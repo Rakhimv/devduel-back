@@ -14,7 +14,7 @@ export const io = new Server(server, {
   cors: {
     origin: [
       process.env.FRONTEND_ORIGIN || "http://localhost:5173",
-      "https://devduel-phi.vercel.app/"
+      "https://devduel-phi.vercel.app"
     ],
     methods: ["GET", "POST"],
     credentials: true

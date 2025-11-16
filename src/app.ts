@@ -13,7 +13,7 @@ import { pool } from "./config/db";
 const app = express();
 
 app.use(cors({
-  origin: process.env.FRONTEND_ORIGIN || "http://localhost:5173",
+  origin: [process.env.FRONTEND_ORIGIN || "http://localhost:5173", "https://devduel-phi.vercel.app"],
   methods: ["GET", "POST", "PUT", "DELETE", "OPTIONS"],
   credentials: true
 }));
