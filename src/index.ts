@@ -30,6 +30,7 @@ const resetOnlineStatus = async () => {
   }
 };
 
+
 resetOnlineStatus().then(async () => {
   await initChatSocket(io);
 });
