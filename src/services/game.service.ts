@@ -52,9 +52,12 @@ export const getTaskByLevel = async (level: number): Promise<Task> => {
 };
 
 export const getAssignedTaskForLevel = async (gameId: string, level: number): Promise<Task> => {
+  const client = await pool.connect();
   try {
-    let result = await pool.query(
-      "SELECT task_id FROM game_assigned_tasks WHERE game_id = $1 AND level = $2",
+    await client.query('BEGIN');
+    
+    let result = await client.query(
+      "SELECT task_id FROM game_assigned_tasks WHERE game_id = $1 AND level = $2 FOR UPDATE",
       [gameId, level]
     );
 
@@ -66,37 +69,48 @@ export const getAssignedTaskForLevel = async (gameId: string, level: number): Pr
       let taskResult;
       
       if (level === 1) {
-        taskResult = await pool.query(
+        taskResult = await client.query(
           "SELECT id FROM game_tasks WHERE difficulty IN ('easy', 'medium') ORDER BY RANDOM() LIMIT 1"
         );
       } else if (level === 2) {
-        taskResult = await pool.query(
+        taskResult = await client.query(
           "SELECT id FROM game_tasks WHERE difficulty IN ('medium', 'hard') ORDER BY RANDOM() LIMIT 1"
         );
       } else {
-        taskResult = await pool.query(
+        taskResult = await client.query(
           "SELECT id FROM game_tasks WHERE level = $1 ORDER BY RANDOM() LIMIT 1",
           [level]
         );
       }
       
       if (taskResult.rows.length === 0) {
+        await client.query('ROLLBACK');
         throw new Error("No task found for this level");
       }
       
       taskId = taskResult.rows[0].id;
       
-      await pool.query(
-        "INSERT INTO game_assigned_tasks (game_id, level, task_id) VALUES ($1, $2, $3) ON CONFLICT (game_id, level) DO NOTHING",
+      await client.query(
+        "INSERT INTO game_assigned_tasks (game_id, level, task_id) VALUES ($1, $2, $3) ON CONFLICT (game_id, level) DO UPDATE SET task_id = EXCLUDED.task_id",
         [gameId, level, taskId]
       );
+      
+      result = await client.query(
+        "SELECT task_id FROM game_assigned_tasks WHERE game_id = $1 AND level = $2",
+        [gameId, level]
+      );
+      taskId = result.rows[0].task_id;
     }
 
+    await client.query('COMMIT');
     const fullTask = await getTaskById(taskId);
     return fullTask;
   } catch (error) {
+    await client.query('ROLLBACK');
     console.error("Error getting assigned task:", error);
     throw error;
+  } finally {
+    client.release();
   }
 };
 
@@ -290,8 +304,12 @@ export const submitTaskSolution = async (
           return str.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
         };
         
-        const normalizedActual = normalizeArrayOutput(actual);
-        const normalizedExpected = normalizeArrayOutput(expected);
+        const normalizeBoolean = (str: string) => {
+          return str.replace(/^True$/i, 'true').replace(/^False$/i, 'false');
+        };
+        
+        const normalizedActual = normalizeBoolean(normalizeArrayOutput(actual));
+        const normalizedExpected = normalizeBoolean(normalizeArrayOutput(expected));
         const passed = normalizedActual === normalizedExpected;
 
         testResults.push({

@@ -247,8 +247,12 @@ export const testTask = async (req: AuthRequest, res: Response) => {
                     return str.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
                 };
 
-                const normalizedActual = normalizeArrayOutput(output);
-                const normalizedExpected = normalizeArrayOutput(testCase.expected.trim());
+                const normalizeBoolean = (str: string) => {
+                    return str.replace(/^True$/i, 'true').replace(/^False$/i, 'false');
+                };
+
+                const normalizedActual = normalizeBoolean(normalizeArrayOutput(output));
+                const normalizedExpected = normalizeBoolean(normalizeArrayOutput(testCase.expected.trim()));
                 const passed = normalizedActual === normalizedExpected;
 
                 results.push({

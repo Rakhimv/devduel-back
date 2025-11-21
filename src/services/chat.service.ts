@@ -195,11 +195,18 @@ export const getMyChatsDB = async (userId: number) => {
 
     return [...privateChats.rows, ...generalChat.rows];
 };
-export const findUserByLogin = async (query: string) => {
-    const res = await pool.query(
-        "SELECT id, name, login as username, avatar FROM users WHERE login ILIKE $1 AND COALESCE(is_banned, FALSE) = FALSE LIMIT 5",
-        [`%${query}%`]
-    );
+export const findUserByLogin = async (query: string, excludeUserId?: number) => {
+    let sql = "SELECT id, name, login as username, avatar FROM users WHERE login ILIKE $1 AND COALESCE(is_banned, FALSE) = FALSE";
+    const params: any[] = [`%${query}%`];
+    
+    if (excludeUserId) {
+        sql += " AND id != $2";
+        params.push(excludeUserId);
+    }
+    
+    sql += " LIMIT 5";
+    
+    const res = await pool.query(sql, params);
     return res.rows;
 };
 export const createPrivateChatDB = async (userId1: number, userId2: number) => {

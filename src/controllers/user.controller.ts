@@ -5,7 +5,8 @@ import { AuthRequest } from "../middlewares/auth.middleware";
 import { pool } from "../config/db";
 
 export const findUser = async (req: any, res: Response) => {
-    const users = await findUserByLogin(req.user.login)
+    const query = req.query.query as string || req.user.login;
+    const users = await findUserByLogin(query, req.user.id);
     res.json(users);
 }
 

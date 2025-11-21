@@ -25,6 +25,9 @@ export const io = new Server(server, {
 
 const resetOnlineStatus = async () => {
   try {
+    await pool.query("UPDATE users SET is_online = FALSE");
+    await pool.query("UPDATE games SET status = 'abandoned', end_time = NOW() WHERE status IN ('waiting', 'ready', 'in_progress')");
+    console.log("Сброшены статусы онлайн и завершены активные игры");
   } catch (error) {
     console.error("Ошибка при сбросе статуса пользователей:", error);
   }
@@ -35,6 +38,14 @@ resetOnlineStatus().then(async () => {
   await initChatSocket(io);
 });
 
+
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught Exception:', error);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+});
 
 const PORT = process.env.PORT
 const HOST = process.env.HOST

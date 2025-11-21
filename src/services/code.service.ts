@@ -54,5 +54,5 @@ export const getLanguageId = (language: string): number => {
     ruby: 72,
   };
 
-  return languageMap[language.toLowerCase()] || 102; // Default to JavaScript
+  return languageMap[language.toLowerCase()] || 102; 
 };

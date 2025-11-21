@@ -32,7 +32,7 @@ export const findChat = async (req: any, res: Response) => {
     if (!query) return res.status(400).json({ error: "Query is required" });
 
     try {
-        const users = await findUserByLogin(query);
+        const users = await findUserByLogin(query, req.user.id);
         res.json(users);
     } catch (error: any) {
         res.status(500).json({ error: error.message });

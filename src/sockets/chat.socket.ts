@@ -28,6 +28,7 @@ interface GameSession {
     id: number;
     username: string;
   };
+  gameTimer?: NodeJS.Timeout;
 }
 
 interface User {
@@ -48,6 +49,64 @@ const gameSessions = new Map<string, GameSession>();
 const gameInvites = new Map<string, any>();
 
 let globalIo: Server | null = null;
+
+const sanitizeForEmit = (obj: any): any => {
+  if (obj === null || obj === undefined) return obj;
+  if (typeof obj !== 'object') return obj;
+  if (Array.isArray(obj)) {
+    return obj.map(item => sanitizeForEmit(item));
+  }
+  
+  const sanitized: any = {};
+  for (const key in obj) {
+    if (obj.hasOwnProperty(key)) {
+      const value = obj[key];
+      if (value === undefined || typeof value === 'function' || value instanceof Set || value instanceof Map) {
+        continue;
+      }
+      try {
+        sanitized[key] = sanitizeForEmit(value);
+      } catch (e) {
+        continue;
+      }
+    }
+  }
+  return sanitized;
+};
+
+const cleanSession = (session: GameSession): any => {
+  return {
+    id: session.id,
+    player1: {
+      id: session.player1.id,
+      username: session.player1.username,
+      avatar: session.player1.avatar,
+      isReady: session.player1.isReady
+    },
+    player2: {
+      id: session.player2.id,
+      username: session.player2.username,
+      avatar: session.player2.avatar,
+      isReady: session.player2.isReady
+    },
+    status: session.status,
+    duration: session.duration,
+    timeRemaining: session.timeRemaining,
+    startTime: session.startTime,
+    gameResult: session.gameResult,
+    winner: session.winner
+  };
+};
+
+const safeEmit = (io: Server | null, room: string, event: string, data: any) => {
+  if (!io) return;
+  try {
+    const sanitized = sanitizeForEmit(data);
+    io.to(room).emit(event, sanitized);
+  } catch (error) {
+    console.error(`Error emitting ${event} to ${room}:`, error);
+  }
+};
 
 export const emitGameProgressUpdate = async (gameId: string) => {
   const session = gameSessions.get(gameId);
@@ -75,12 +134,12 @@ export const emitGameProgressUpdate = async (gameId: string) => {
     );
     const p2Level = p2ProgressRes.rows.length + 1;
 
-    globalIo.to(`user_${game.player1_id}`).emit("game_progress_update", {
+    safeEmit(globalIo, `user_${game.player1_id}`, "game_progress_update", {
       playerLevel: p1Level,
       opponentLevel: p2Level
     });
 
-    globalIo.to(`user_${game.player2_id}`).emit("game_progress_update", {
+    safeEmit(globalIo, `user_${game.player2_id}`, "game_progress_update", {
       playerLevel: p2Level,
       opponentLevel: p1Level
     });
@@ -91,6 +150,13 @@ export const emitGameProgressUpdate = async (gameId: string) => {
 
 export const finishGame = async (gameId: string, reason: 'finished' | 'player_left' | 'timeout' = 'finished', winnerId?: number | null) => {
   const session = gameSessions.get(gameId);
+  
+
+  if (session?.gameTimer) {
+    clearInterval(session.gameTimer);
+    session.gameTimer = undefined;
+  }
+  
   if (!session) {
     try {
       const result = await pool.query(
@@ -170,8 +236,8 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
             winner: winnerInfo
           };
 
-          globalIo.to(`user_${row.player1_id}`).emit("game_session_end", finalSession);
-          globalIo.to(`user_${row.player2_id}`).emit("game_session_end", finalSession);
+          safeEmit(globalIo, `user_${row.player1_id}`, "game_session_end", finalSession);
+          safeEmit(globalIo, `user_${row.player2_id}`, "game_session_end", finalSession);
           
           await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -271,15 +337,29 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
     await new Promise(resolve => setTimeout(resolve, 1200));
     
     const finalSession = {
-      ...session,
       id: session.id,
+      player1: {
+        id: session.player1.id,
+        username: session.player1.username,
+        avatar: session.player1.avatar,
+        isReady: false
+      },
+      player2: {
+        id: session.player2.id,
+        username: session.player2.username,
+        avatar: session.player2.avatar,
+        isReady: false
+      },
       status: 'finished' as const,
       duration: actualDuration || session.duration,
-      timeRemaining: 0
+      timeRemaining: 0,
+      startTime: session.startTime,
+      gameResult: reason === 'player_left' ? 'player_left' : reason === 'timeout' ? 'timeout' : 'completed',
+      winner: session.winner
     };
     
-    globalIo.to(`user_${session.player1.id}`).emit("game_session_end", finalSession);
-    globalIo.to(`user_${session.player2.id}`).emit("game_session_end", finalSession);
+    safeEmit(globalIo, `user_${session.player1.id}`, "game_session_end", finalSession);
+    safeEmit(globalIo, `user_${session.player2.id}`, "game_session_end", finalSession);
 
     await new Promise(resolve => setTimeout(resolve, 200));
 
@@ -289,20 +369,24 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
     );
 
     for (const chat of chatParticipantsRes.rows) {
-      globalIo.to(chat.chat_id).emit("game_end_notification", {
+      safeEmit(globalIo, chat.chat_id, "game_end_notification", {
         reason,
         duration: actualDuration || session.duration
       });
 
-      const updateRes = await pool.query(
-        "UPDATE messages SET game_invite_data = jsonb_set(game_invite_data, '{status}', '\"abandoned\"') WHERE game_invite_data->>'from_user_id' = ANY($1) AND game_invite_data->>'status' = '\"accepted\"' AND chat_id = $2 RETURNING game_invite_data->>'invite_id' as invite_id",
-        [[session.player1.id, session.player2.id], chat.chat_id]
-      );
+      try {
+        const updateRes = await pool.query(
+          "UPDATE messages SET game_invite_data = jsonb_set(game_invite_data, '{status}', '\"abandoned\"') WHERE game_invite_data->>'from_user_id' = ANY($1) AND game_invite_data->>'status' = '\"accepted\"' AND chat_id = $2 RETURNING game_invite_data->>'invite_id' as invite_id",
+          [[session.player1.id, session.player2.id], chat.chat_id]
+        );
 
-      for (const row of updateRes.rows) {
-        if (row.invite_id) {
-          globalIo.to(chat.chat_id).emit("game_invite_abandoned", { inviteId: row.invite_id });
+        for (const row of updateRes.rows) {
+          if (row.invite_id) {
+            safeEmit(globalIo, chat.chat_id, "game_invite_abandoned", { inviteId: row.invite_id });
+          }
         }
+      } catch (error) {
+        console.error("Error updating game invite messages:", error);
       }
     }
   }
@@ -314,40 +398,9 @@ export const finishGame = async (gameId: string, reason: 'finished' | 'player_le
 
 async function loadActiveGameSessions() {
   try {
-    const result = await pool.query(
-      "SELECT id, player1_id, player2_id, player1_ready, player2_ready, status, start_time, duration_ms FROM games WHERE status IN ('waiting', 'ready', 'in_progress')"
-    );
-
-    for (const row of result.rows) {
-      const player1Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player1_id]);
-      const player2Res = await pool.query("SELECT login, avatar FROM users WHERE id = $1", [row.player2_id]);
-      
-      console.log('Player1 avatar from DB:', player1Res.rows[0]?.avatar);
-      console.log('Player2 avatar from DB:', player2Res.rows[0]?.avatar);
-
-      const session: GameSession = {
-        id: row.id,
-        player1: {
-          id: row.player1_id,
-          username: player1Res.rows[0]?.login || 'Unknown',
-          avatar: player1Res.rows[0]?.avatar || null,
-          isReady: row.player1_ready
-        },
-        player2: {
-          id: row.player2_id,
-          username: player2Res.rows[0]?.login || 'Unknown',
-          avatar: player2Res.rows[0]?.avatar || null,
-          isReady: row.player2_ready
-        },
-        status: row.status as GameSession['status'],
-        duration: row.duration_ms,
-        timeRemaining: row.duration_ms,
-        startTime: row.start_time || new Date().toISOString()
-      };
-
-      gameSessions.set(row.id, session);
-      console.log(`Loaded active game session: ${row.id}`);
-    }
+    gameSessions.clear();
+    gameInvites.clear();
+    console.log("Очищены активные игровые сессии и приглашения");
   } catch (error) {
     console.error("Error loading active game sessions:", error);
   }
@@ -833,8 +886,27 @@ export const initChatSocket = async (io: Server) => {
         }
 
         console.log(`Emitting game_invite_accepted to user_${invite.fromUserId} and user_${invite.toUserId}`);
-        io.to(`user_${invite.fromUserId}`).emit("game_invite_accepted", session);
-        io.to(`user_${invite.toUserId}`).emit("game_invite_accepted", session);
+        const cleanSession = {
+          id: session.id,
+          player1: {
+            id: session.player1.id,
+            username: session.player1.username,
+            avatar: session.player1.avatar,
+            isReady: session.player1.isReady
+          },
+          player2: {
+            id: session.player2.id,
+            username: session.player2.username,
+            avatar: session.player2.avatar,
+            isReady: session.player2.isReady
+          },
+          status: session.status,
+          duration: session.duration,
+          timeRemaining: session.timeRemaining,
+          startTime: session.startTime
+        };
+        safeEmit(io, `user_${invite.fromUserId}`, "game_invite_accepted", cleanSession);
+        safeEmit(io, `user_${invite.toUserId}`, "game_invite_accepted", cleanSession);
 
       } catch (error) {
         console.error("Error accepting game invite:", error);
@@ -910,71 +982,81 @@ export const initChatSocket = async (io: Server) => {
             console.error("Error updating game to in_progress:", error);
           }
 
-          io.to(`user_${session.player1.id}`).emit("game_session_update", session);
-          io.to(`user_${session.player2.id}`).emit("game_session_update", session);
+          safeEmit(io, `user_${session.player1.id}`, "game_session_update", cleanSession(session));
+          safeEmit(io, `user_${session.player2.id}`, "game_session_update", cleanSession(session));
 
           const gameTimer = setInterval(async () => {
-            const now = Date.now();
-            const startTime = new Date(session.startTime).getTime();
-            const elapsed = now - startTime;
-            const remaining = Math.max(0, session.duration - elapsed);
+            try {
+              const now = Date.now();
+              const startTime = new Date(session.startTime).getTime();
+              const elapsed = now - startTime;
+              const remaining = Math.max(0, session.duration - elapsed);
 
-            session.timeRemaining = remaining;
+              session.timeRemaining = remaining;
 
-            if (remaining <= 0) {
-              clearInterval(gameTimer);
-              
-              const gameStatusCheck = await pool.query(
-                "SELECT status FROM games WHERE id = $1",
-                [sessionId]
-              );
-              
-              if (gameStatusCheck.rows.length > 0 && gameStatusCheck.rows[0].status === 'in_progress') {
-                try {
-                  const p1Completions = await pool.query(
-                    "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player1_id FROM games WHERE id = $1)",
-                    [sessionId]
-                  );
-                  const p2Completions = await pool.query(
-                    "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player2_id FROM games WHERE id = $1)",
-                    [sessionId]
-                  );
-                  
-                  const p1Count = parseInt(p1Completions.rows[0].count);
-                  const p2Count = parseInt(p2Completions.rows[0].count);
-                  
-                  let timeoutWinnerId = null;
-                  if (p1Count > p2Count) {
-                    const gameRes = await pool.query("SELECT player1_id FROM games WHERE id = $1", [sessionId]);
-                    timeoutWinnerId = gameRes.rows[0]?.player1_id;
-                  } else if (p2Count > p1Count) {
-                    const gameRes = await pool.query("SELECT player2_id FROM games WHERE id = $1", [sessionId]);
-                    timeoutWinnerId = gameRes.rows[0]?.player2_id;
-                  }
-                  
-                  if (timeoutWinnerId) {
-                    await pool.query(
-                      "UPDATE games SET winner_id = $1 WHERE id = $2",
-                      [timeoutWinnerId, sessionId]
+              // Проверяем, что время истекло (с небольшим запасом для точности)
+              if (remaining <= 0 || elapsed >= session.duration) {
+                clearInterval(gameTimer);
+                
+                // Убеждаемся, что игра все еще в процессе
+                const gameStatusCheck = await pool.query(
+                  "SELECT status FROM games WHERE id = $1",
+                  [sessionId]
+                );
+                
+                if (gameStatusCheck.rows.length > 0 && gameStatusCheck.rows[0].status === 'in_progress') {
+                  try {
+                    const p1Completions = await pool.query(
+                      "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player1_id FROM games WHERE id = $1)",
+                      [sessionId]
                     );
+                    const p2Completions = await pool.query(
+                      "SELECT COUNT(*) as count FROM game_task_completions WHERE game_id = $1 AND player_id = (SELECT player2_id FROM games WHERE id = $1)",
+                      [sessionId]
+                    );
+                    
+                    const p1Count = parseInt(p1Completions.rows[0].count);
+                    const p2Count = parseInt(p2Completions.rows[0].count);
+                    
+                    let timeoutWinnerId = null;
+                    if (p1Count > p2Count) {
+                      const gameRes = await pool.query("SELECT player1_id FROM games WHERE id = $1", [sessionId]);
+                      timeoutWinnerId = gameRes.rows[0]?.player1_id;
+                    } else if (p2Count > p1Count) {
+                      const gameRes = await pool.query("SELECT player2_id FROM games WHERE id = $1", [sessionId]);
+                      timeoutWinnerId = gameRes.rows[0]?.player2_id;
+                    }
+                    
+                    if (timeoutWinnerId) {
+                      await pool.query(
+                        "UPDATE games SET winner_id = $1 WHERE id = $2",
+                        [timeoutWinnerId, sessionId]
+                      );
+                    }
+                    
+                    await finishGame(sessionId, 'timeout', timeoutWinnerId);
+                  } catch (error) {
+                    console.error("Error determining timeout winner:", error);
+                    await finishGame(sessionId, 'timeout');
                   }
-                  
-                  await finishGame(sessionId, 'timeout', timeoutWinnerId);
-                } catch (error) {
-                  console.error("Error determining timeout winner:", error);
-                  await finishGame(sessionId, 'timeout');
                 }
+              } else {
+                safeEmit(io, `user_${session.player1.id}`, "game_session_update", cleanSession(session));
+                safeEmit(io, `user_${session.player2.id}`, "game_session_update", cleanSession(session));
               }
-            } else {
-              io.to(`user_${session.player1.id}`).emit("game_session_update", session);
-              io.to(`user_${session.player2.id}`).emit("game_session_update", session);
+            } catch (error) {
+              console.error("Error in game timer:", error);
+              clearInterval(gameTimer);
             }
           }, 1000);
+          
+          // Сохраняем таймер в сессии для возможной очистки
+          session.gameTimer = gameTimer;
         }, 3000);
       }
 
-      io.to(`user_${session.player1.id}`).emit("game_session_update", session);
-      io.to(`user_${session.player2.id}`).emit("game_session_update", session);
+      safeEmit(io, `user_${session.player1.id}`, "game_session_update", cleanSession(session));
+      safeEmit(io, `user_${session.player2.id}`, "game_session_update", cleanSession(session));
     });
 
     socket.on("join_game_session", async ({ sessionId }) => {
@@ -993,7 +1075,11 @@ export const initChatSocket = async (io: Server) => {
         
         if (gameStatus === 'abandoned' || gameStatus === 'finished') {
           if (gameStatus === 'abandoned') {
-            socket.emit("game_session_end", { reason: 'player_left' });
+            try {
+              socket.emit("game_session_end", { reason: 'player_left' });
+            } catch (error) {
+              console.error("Error emitting game_session_end:", error);
+            }
           } else {
             try {
               const finishedGameRes = await pool.query(
@@ -1046,13 +1132,25 @@ export const initChatSocket = async (io: Server) => {
                   winner: winnerInfo
                 };
                 
-                socket.emit("game_session_end", finalSession);
+                try {
+                  socket.emit("game_session_end", finalSession);
+                } catch (emitError) {
+                  console.error("Error emitting game_session_end:", emitError);
+                }
               } else {
-                socket.emit("game_session_end", { reason: 'finished' });
+                try {
+                  socket.emit("game_session_end", { reason: 'finished' });
+                } catch (emitError) {
+                  console.error("Error emitting game_session_end:", emitError);
+                }
               }
             } catch (error) {
               console.error("Error loading finished game:", error);
-              socket.emit("game_session_end", { reason: 'finished' });
+              try {
+                socket.emit("game_session_end", { reason: 'finished' });
+              } catch (emitError) {
+                console.error("Error emitting game_session_end:", emitError);
+              }
             }
           }
           return;
@@ -1106,13 +1204,22 @@ export const initChatSocket = async (io: Server) => {
 
       if (session) {
         if (session.status === 'finished' || session.status === 'abandoned') {
-          socket.emit("game_session_end", session.status === 'abandoned' ? { reason: 'player_left' } : { ...session, reason: 'finished' });
+          const cleanSessionData = session.status === 'abandoned' ? { reason: 'player_left' } : { ...cleanSession(session), reason: 'finished' };
+          try {
+            socket.emit("game_session_end", cleanSessionData);
+          } catch (error) {
+            console.error("Error emitting game_session_end:", error);
+          }
           return;
         }
         
         if (session.player1.id === socket.data.user.id || session.player2.id === socket.data.user.id) {
           socket.data.currentGameSession = sessionId;
-          socket.emit("game_session_update", session);
+          try {
+            socket.emit("game_session_update", cleanSession(session));
+          } catch (error) {
+            console.error("Error emitting game_session_update:", error);
+          }
         } else {
           socket.emit("game_not_found");
         }
