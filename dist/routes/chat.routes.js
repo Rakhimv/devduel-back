@@ -1,0 +1,17 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const auth_middleware_1 = require("../middlewares/auth.middleware");
+const chat_controller_1 = require("../controllers/chat.controller");
+const router = (0, express_1.Router)();
+router.get("/my", auth_middleware_1.authMiddleware, chat_controller_1.getMyChats);
+router.get("/search", auth_middleware_1.authMiddleware, chat_controller_1.findChat);
+router.get("/:chatId", auth_middleware_1.authMiddleware, chat_controller_1.getChat);
+router.post("/private", auth_middleware_1.authMiddleware, chat_controller_1.createPrivateChat);
+router.post("/:chatId/mark-read", auth_middleware_1.authMiddleware, chat_controller_1.markMessagesAsRead);
+router.post("/:chatId/clear", auth_middleware_1.authMiddleware, chat_controller_1.clearChatHistory);
+router.get("/:chatId/messages", auth_middleware_1.authMiddleware, chat_controller_1.getMessagesChat);
+router.get("/:chatId/invite", auth_middleware_1.authMiddleware, chat_controller_1.sendChatInvite);
+router.delete("/:chatId", auth_middleware_1.authMiddleware, chat_controller_1.deleteChat);
+router.delete("/messages/:messageId", auth_middleware_1.authMiddleware, chat_controller_1.deleteMessage);
+exports.default = router;

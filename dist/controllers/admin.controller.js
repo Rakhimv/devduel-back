@@ -1,0 +1,245 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+exports.testTask = exports.setMaintenanceMode = exports.getMaintenanceMode = exports.getStatistics = exports.deleteTask = exports.updateTask = exports.createTask = exports.getTasks = exports.unbanUser = exports.banUser = exports.getUsers = void 0;
+const db_1 = require("../config/db");
+const code_service_1 = require("../services/code.service");
+const testWrapper_1 = require("../utils/testWrapper");
+const getUsers = async (req, res) => {
+    try {
+        const result = await db_1.pool.query('SELECT id, name, login, email, avatar, role, is_banned, games_count, wins_count, created_at FROM users ORDER BY created_at DESC');
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('Error getting users:', error);
+        res.status(500).json({ error: 'Ошибка получения пользователей' });
+    }
+};
+exports.getUsers = getUsers;
+const banUser = async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        if (isNaN(userId)) {
+            return res.status(400).json({ error: 'Неверный ID пользователя' });
+        }
+        await db_1.pool.query('UPDATE users SET is_banned = TRUE WHERE id = $1', [userId]);
+        res.json({ message: 'Пользователь забанен' });
+    }
+    catch (error) {
+        console.error('Error banning user:', error);
+        res.status(500).json({ error: 'Ошибка бана пользователя' });
+    }
+};
+exports.banUser = banUser;
+const unbanUser = async (req, res) => {
+    try {
+        const userId = parseInt(req.params.id);
+        if (isNaN(userId)) {
+            return res.status(400).json({ error: 'Неверный ID пользователя' });
+        }
+        await db_1.pool.query('UPDATE users SET is_banned = FALSE WHERE id = $1', [userId]);
+        res.json({ message: 'Пользователь разбанен' });
+    }
+    catch (error) {
+        console.error('Error unbanning user:', error);
+        res.status(500).json({ error: 'Ошибка разбана пользователя' });
+    }
+};
+exports.unbanUser = unbanUser;
+const getTasks = async (req, res) => {
+    try {
+        const result = await db_1.pool.query('SELECT * FROM game_tasks ORDER BY level, id');
+        res.json(result.rows);
+    }
+    catch (error) {
+        console.error('Error getting tasks:', error);
+        res.status(500).json({ error: 'Ошибка получения заданий' });
+    }
+};
+exports.getTasks = getTasks;
+const createTask = async (req, res) => {
+    try {
+        const { title, description, input_example, output_example, difficulty, level, code_templates, supported_languages, function_signature, test_cases } = req.body;
+        const result = await db_1.pool.query(`INSERT INTO game_tasks (title, description, input_example, output_example, difficulty, level, code_templates, supported_languages, function_signature, test_cases)
+             VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) RETURNING *`, [title, description, input_example, output_example, difficulty, level, JSON.stringify(code_templates), supported_languages, function_signature, JSON.stringify(test_cases)]);
+        res.json(result.rows[0]);
+    }
+    catch (error) {
+        console.error('Error creating task:', error);
+        res.status(500).json({ error: 'Ошибка создания задания' });
+    }
+};
+exports.createTask = createTask;
+const updateTask = async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id);
+        if (isNaN(taskId)) {
+            return res.status(400).json({ error: 'Неверный ID задания' });
+        }
+        const { title, description, input_example, output_example, difficulty, level, code_templates, supported_languages, function_signature, test_cases } = req.body;
+        const result = await db_1.pool.query(`UPDATE game_tasks 
+             SET title = $1, description = $2, input_example = $3, output_example = $4, difficulty = $5, level = $6, 
+                 code_templates = $7, supported_languages = $8, function_signature = $9, test_cases = $10
+             WHERE id = $11 RETURNING *`, [title, description, input_example, output_example, difficulty, level, JSON.stringify(code_templates), supported_languages, function_signature, JSON.stringify(test_cases), taskId]);
+        if (result.rows.length === 0) {
+            return res.status(404).json({ error: 'Задание не найдено' });
+        }
+        res.json(result.rows[0]);
+    }
+    catch (error) {
+        console.error('Error updating task:', error);
+        res.status(500).json({ error: 'Ошибка обновления задания' });
+    }
+};
+exports.updateTask = updateTask;
+const deleteTask = async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id);
+        if (isNaN(taskId)) {
+            return res.status(400).json({ error: 'Неверный ID задания' });
+        }
+        await db_1.pool.query('DELETE FROM game_tasks WHERE id = $1', [taskId]);
+        res.json({ message: 'Задание удалено' });
+    }
+    catch (error) {
+        console.error('Error deleting task:', error);
+        res.status(500).json({ error: 'Ошибка удаления задания' });
+    }
+};
+exports.deleteTask = deleteTask;
+const getStatistics = async (req, res) => {
+    try {
+        const usersCount = await db_1.pool.query('SELECT COUNT(*) as count FROM users WHERE is_banned = FALSE');
+        const bannedUsersCount = await db_1.pool.query('SELECT COUNT(*) as count FROM users WHERE is_banned = TRUE');
+        const tasksCount = await db_1.pool.query('SELECT COUNT(*) as count FROM game_tasks');
+        const gamesCount = await db_1.pool.query('SELECT COUNT(*) as count FROM games');
+        const activeGamesCount = await db_1.pool.query("SELECT COUNT(*) as count FROM games WHERE status = 'in_progress'");
+        res.json({
+            totalUsers: parseInt(usersCount.rows[0].count),
+            bannedUsers: parseInt(bannedUsersCount.rows[0].count),
+            totalTasks: parseInt(tasksCount.rows[0].count),
+            totalGames: parseInt(gamesCount.rows[0].count),
+            activeGames: parseInt(activeGamesCount.rows[0].count)
+        });
+    }
+    catch (error) {
+        console.error('Error getting statistics:', error);
+        res.status(500).json({ error: 'Ошибка получения статистики' });
+    }
+};
+exports.getStatistics = getStatistics;
+const getMaintenanceMode = async (req, res) => {
+    try {
+        const result = await db_1.pool.query("SELECT value FROM app_settings WHERE key = 'maintenance_mode'");
+        if (result.rows.length === 0) {
+            return res.json({ enabled: false });
+        }
+        const setting = result.rows[0].value;
+        res.json({ enabled: setting.enabled || false });
+    }
+    catch (error) {
+        console.error('Error getting maintenance mode:', error);
+        res.status(500).json({ error: 'Ошибка получения режима обслуживания' });
+    }
+};
+exports.getMaintenanceMode = getMaintenanceMode;
+const setMaintenanceMode = async (req, res) => {
+    try {
+        const { enabled } = req.body;
+        if (typeof enabled !== 'boolean') {
+            return res.status(400).json({ error: 'Неверное значение enabled' });
+        }
+        await db_1.pool.query(`INSERT INTO app_settings (key, value, updated_at) 
+             VALUES ('maintenance_mode', $1::jsonb, NOW())
+             ON CONFLICT (key) 
+             DO UPDATE SET value = $1::jsonb, updated_at = NOW()`, [JSON.stringify({ enabled })]);
+        res.json({ enabled, message: `Режим обслуживания ${enabled ? 'включен' : 'выключен'}` });
+    }
+    catch (error) {
+        console.error('Error setting maintenance mode:', error);
+        res.status(500).json({ error: 'Ошибка установки режима обслуживания' });
+    }
+};
+exports.setMaintenanceMode = setMaintenanceMode;
+const testTask = async (req, res) => {
+    try {
+        const taskId = parseInt(req.params.id);
+        const { languageId, code } = req.body;
+        if (isNaN(taskId)) {
+            return res.status(400).json({ error: 'Неверный ID задания' });
+        }
+        if (!languageId || !code) {
+            return res.status(400).json({ error: 'Не указан язык или код' });
+        }
+        const taskResult = await db_1.pool.query('SELECT * FROM game_tasks WHERE id = $1', [taskId]);
+        if (taskResult.rows.length === 0) {
+            return res.status(404).json({ error: 'Задание не найдено' });
+        }
+        const task = taskResult.rows[0];
+        const testCases = typeof task.test_cases === 'string' ? JSON.parse(task.test_cases) : task.test_cases;
+        const languageMap = {
+            102: 'javascript',
+            109: 'python',
+            105: 'cpp',
+            51: 'csharp',
+            107: 'go',
+            98: 'php',
+            91: 'java'
+        };
+        const language = languageMap[languageId] || 'javascript';
+        const results = [];
+        for (const testCase of testCases) {
+            try {
+                const wrappedCode = (0, testWrapper_1.wrapCodeForTesting)(code, language, testCase, task.function_signature);
+                const result = await (0, code_service_1.executeCode)({
+                    source_code: wrappedCode,
+                    language_id: languageId,
+                    stdin: '',
+                    cpu_time_limit: 5,
+                    memory_limit: 128000
+                });
+                let output = '';
+                if (result.status.id === 3 && result.stdout) {
+                    output = result.stdout.trim();
+                }
+                else if (result.stderr) {
+                    output = `Error: ${result.stderr}`;
+                }
+                else if (result.compile_output) {
+                    output = `Compile Error: ${result.compile_output}`;
+                }
+                const normalizeArrayOutput = (str) => {
+                    return str.replace(/\[\s+/g, '[').replace(/\s+\]/g, ']');
+                };
+                const normalizedActual = normalizeArrayOutput(output);
+                const normalizedExpected = normalizeArrayOutput(testCase.expected.trim());
+                const passed = normalizedActual === normalizedExpected;
+                results.push({
+                    input: testCase.input,
+                    expected: testCase.expected,
+                    output: normalizedActual || output || 'No output',
+                    passed
+                });
+            }
+            catch (error) {
+                results.push({
+                    input: testCase.input,
+                    expected: testCase.expected,
+                    output: error.message || 'Ошибка выполнения',
+                    passed: false
+                });
+            }
+        }
+        const allPassed = results.every(r => r.passed);
+        res.json({
+            success: allPassed,
+            results,
+            passed: results.filter(r => r.passed).length,
+            total: results.length
+        });
+    }
+    catch (error) {
+        console.error('Error testing task:', error);
+        res.status(500).json({ error: 'Ошибка тестирования задания' });
+    }
+};
+exports.testTask = testTask;

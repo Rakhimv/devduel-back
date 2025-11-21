@@ -1,0 +1,10 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const game_controller_1 = require("../controllers/game.controller");
+const auth_middleware_1 = require("../middlewares/auth.middleware");
+const router = (0, express_1.Router)();
+router.get("/task/:taskId/template", game_controller_1.getTaskTemplateController);
+router.get("/progress/:gameId", auth_middleware_1.authMiddleware, game_controller_1.getProgress);
+router.post("/submit", auth_middleware_1.authMiddleware, game_controller_1.submitSolution);
+exports.default = router;
